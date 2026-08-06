@@ -31,9 +31,19 @@ end
 -- Replace the URL with YOUR raw GitHub link (the "Raw" button url, NOT the /blob/ page).
 local AUTOEXEC_LOADER = [[loadstring(game:HttpGet("https://raw.githubusercontent.com/rencito974/E/main/firescripts.lua"))()]]
 
+local autoExecQueued = false
 local function queueAutoExec()
+    if autoExecQueued then return end          -- only queue ONCE per execution
     local qot = getQueueTeleport()
-    if qot then pcall(qot, AUTOEXEC_LOADER) end
+    if qot then
+        pcall(qot, AUTOEXEC_LOADER)
+        autoExecQueued = true
+    end
+end
+local function clearAutoExec()
+    local qot = getQueueTeleport()
+    if qot then pcall(qot, "") end
+    autoExecQueued = false
 end
 -- ==============================================
 
@@ -2575,12 +2585,10 @@ Tabs["Settings"]:AddToggle("tAutoExec", {
     Default = true;
     Callback = function(Value)
         getgenv().AutoExecCloudy = Value
-        local qot = getQueueTeleport()
-        if not qot then return end
         if Value then
-            pcall(qot, AUTOEXEC_LOADER)   -- queue the hub for the next teleport
+            queueAutoExec()   -- guarded: queues at most once per execution
         else
-            pcall(qot, "")                -- clear the queued script
+            clearAutoExec()
         end
     end
 })
