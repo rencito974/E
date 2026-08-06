@@ -655,21 +655,10 @@ Tabs["Lobby"]:AddDropdown("dHubMode", {
     Multi = false;
 })
 
--- resolve the hub's party container ONCE and cache it. rescanning the whole game every
--- poll (workspace:GetDescendants) is what was freezing/crashing the client.
-linked._partyContainer = nil
+-- party objects live directly under ReplicatedStorage.parties (confirmed in-game).
+-- cheap direct lookup, no whole-game scan.
 linked.getPartyContainer = function()
-    if linked._partyContainer and linked._partyContainer.Parent then
-        return linked._partyContainer
-    end
-    for _, root in ipairs({ReplicatedStorage, workspace}) do
-        for _, d in ipairs(root:GetDescendants()) do
-            if d:FindFirstChild("ownerid") and d:FindFirstChild("gamemodeequiped") then
-                linked._partyContainer = d.Parent
-                return linked._partyContainer
-            end
-        end
-    end
+    return ReplicatedStorage:FindFirstChild("parties")
 end
 
 linked.findMyParty = function()
