@@ -27,7 +27,8 @@ local function getQueueTeleport()
         or queueonteleport
 end
 
-
+-- The exact loadstring you paste into your executor to run this hub.
+-- Replace the URL with YOUR raw GitHub link (the "Raw" button url, NOT the /blob/ page).
 local AUTOEXEC_LOADER = [[loadstring(game:HttpGet("https://raw.githubusercontent.com/rencito974/E/main/firescripts.lua"))()]]
 
 local function queueAutoExec()
@@ -654,22 +655,60 @@ Tabs["Lobby"]:AddDropdown("dHubMode", {
     Multi = false;
 })
 
+-- resolve the hub's party container ONCE and cache it. rescanning the whole game every
+-- poll (workspace:GetDescendants) is what was freezing/crashing the client.
+linked._partyContainer = nil
+linked.getPartyContainer = function()
+    if linked._partyContainer and linked._partyContainer.Parent then
+        return linked._partyContainer
+    end
+    for _, root in ipairs({ReplicatedStorage, workspace}) do
+        for _, d in ipairs(root:GetDescendants()) do
+            if d:FindFirstChild("ownerid") and d:FindFirstChild("gamemodeequiped") then
+                linked._partyContainer = d.Parent
+                return linked._partyContainer
+            end
+        end
+    end
+end
+
+linked.findMyParty = function()
+    local container = linked.getPartyContainer()
+    if not container then return nil end
+    for _, v in ipairs(container:GetChildren()) do
+        local owner = v:FindFirstChild("ownerid")
+        if owner and owner.Value == client.Name then
+            return v
+        end
+    end
+end
+
+linked.autoJoinGamemode = function()
+    if placeId ~= 9321822839 then return end
+    task.spawn(function()
+        local party, t0 = nil, os.clock()
+        repeat
+            party = linked.findMyParty()
+            if not party then task.wait(1) end
+        until party or (os.clock() - t0 > 30)
+        if not party then
+            Library:Notify({ Title = "Auto Join Gamemode", Content = "Couldn't find your party in the hub", Duration = 5 })
+            return
+        end
+        local t1 = os.clock()
+        repeat
+            ReplicatedStorage:WaitForChild("change_game_mode"):FireServer(party.gamemodeequiped, options.dHubMode.Value)
+            task.wait(0.3)
+        until party.gamemodeequiped.Value == options.dHubMode.Value or (os.clock() - t1 > 15)
+        ReplicatedStorage:WaitForChild("queu_up"):FireServer()
+    end)
+end
+
 Tabs["Lobby"]:AddToggle("tHubJoin", {
     Title = getTrans("tHubJoin", "Title");
     Default = false;
 }):OnChanged(function(Value)
-    if Value and placeid == 9321822839 then
-        local party;while not party do
-            for i,v in parties:GetChildren() do
-                if v.ownerid.Value == game.Players.LocalPlayer.Name then
-                    party = v
-                end
-            end
-            task.wait()
-        end
-        repeat ReplicatedStorage:WaitForChild("change_game_mode"):FireServer(party.gamemodeequiped, options.dHubMode.Value); task.wait(0.1) until party.gamemodeequiped.Value == options.dHubMode.Value
-        ReplicatedStorage:WaitForChild("queu_up"):FireServer()
-    end
+    if Value then linked.autoJoinGamemode() end
 end)
 
 Tabs["Lobby"]:AddSection(getTrans("seClan", "Title"))
@@ -3109,6 +3148,12 @@ SaveManager:LoadAutoloadConfig()
 -- fire the auto-exec queue on startup based on the (restored) toggle state
 if options.tAutoExec and options.tAutoExec.Value then
     queueAutoExec()
+end
+
+-- if we (re)joined the Hub with Auto Join Gamemode on, kick it off now directly
+-- (the toggle's OnChanged can get swallowed by the empty-handler loop above)
+if placeId == 9321822839 and options.tHubJoin and options.tHubJoin.Value then
+    linked.autoJoinGamemode()
 end
 
 
