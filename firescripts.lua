@@ -622,28 +622,36 @@ Tabs["Lobby"]:AddDropdown("dMapSelect", {
     Multi = false,
 })
 
+linked._autoJoinServerRunning = false
+linked.autoJoinServer = function()
+    if placeId ~= 5956785391 then return end
+    if linked._autoJoinServerRunning then return end
+    linked._autoJoinServerRunning = true
+    task.spawn(function()
+        repeat task.wait() until game:IsLoaded()
+        pcall(function()
+            workspace.Is_Customization_place:WaitForChild("Slot3")
+            client:WaitForChild("Slot")
+            ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Apply_Slot"):InvokeServer(options["sSlot"].Value)
+        end)
+        while task.wait(1) do
+            if not options["tAutoJoin"].Value then break end
+            if options["iCode"].Value ~= "" then
+                ReplicatedStorage:WaitForChild("handle_privateserver"):InvokeServer("join", options["iCode"].Value, maps[options["dMapSelect"].Value])
+            else
+                TeleportService:Teleport(maps[options["dMapSelect"].Value], client)
+            end
+        end
+        linked._autoJoinServerRunning = false
+    end)
+end
+
 Tabs["Lobby"]:AddToggle("tAutoJoin", {
     Title = getTrans("tAutoJoin", "Title");
     Description = getTrans("tAutoJoin", "Title");
     Default = false;
 }):OnChanged(function(Value)
-    task.spawn(function()
-        if Value and placeId == 5956785391 then
-            repeat task.wait() until game:IsLoaded()
-            workspace.Is_Customization_place:WaitForChild("Slot3")
-            client:WaitForChild("Slot")
-            ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Apply_Slot"):InvokeServer(options["sSlot"].Value)
-            while task.wait(1) do
-                if options["tAutoJoin"].Value then
-                    if options["iCode"].Value ~= "" then
-                        game:GetService("ReplicatedStorage"):WaitForChild("handle_privateserver"):InvokeServer("join", options["iCode"].Value, maps[options["dMapSelect"].Value])
-                    else
-                        TeleportService:Teleport(maps[options["dMapSelect"].Value], client)
-                    end
-                end
-            end
-        end
-    end)
+    if Value then linked.autoJoinServer() end
 end)
 
 Tabs["Lobby"]:AddSection(getTrans("seHub", "Title"))
@@ -3139,8 +3147,12 @@ if options.tAutoExec and options.tAutoExec.Value then
     queueAutoExec()
 end
 
--- if we (re)joined the Hub with Auto Join Gamemode on, kick it off now directly
--- (the toggle's OnChanged can get swallowed by the empty-handler loop above)
+-- these run the auto-join actions DIRECTLY on (re)join, bypassing the empty-handler
+-- loop above that swallows OnChanged in the lobby/hub. this is what makes autoload work.
+if placeId == 5956785391 and options.tAutoJoin and options.tAutoJoin.Value then
+    linked.autoJoinServer()
+end
+
 if placeId == 9321822839 and options.tHubJoin and options.tHubJoin.Value then
     linked.autoJoinGamemode()
 end
