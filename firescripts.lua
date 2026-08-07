@@ -91,6 +91,18 @@ end
 -- VARS
 local client = Players.LocalPlayer
 local camera = workspace.CurrentCamera
+
+-- ANTI-AFK: the game kicks after 20 min of no REAL input (scripted movement doesn't count),
+-- which was disconnecting the auto-grind before the mugen trip. Reset the idle timer whenever
+-- it's about to fire. Runs in every place since the script re-executes on each teleport.
+if not getgenv().__CloudyAntiAfk then
+    getgenv().__CloudyAntiAfk = true
+    local VirtualUser = game:GetService("VirtualUser")
+    client.Idled:Connect(function()
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.new())
+    end)
+end
 local ping = StatsService.Network.ServerStatsItem["Data Ping"]
 local placeId = game.PlaceId
 local jobId = game.JobId
@@ -3155,10 +3167,15 @@ do
     local function inHub()      return placeId == HUB end
     local function inDungeon()  return placeId == 11468075017 or placeId == 11468034852 end
     local function inMap2()     return placeId == MAP2_PUBLIC or placeId == MAP2_PRIVATE end
-    local function windowOpen() local t = (tick() / 60) % 60; return t > 0 and t < 10 end
-    local function thisHour()   return math.floor(tick() / 3600) end
-    local function mugenDone()  return isfile(MARKER) and tonumber(readfile(MARKER)) == thisHour() end
-    local function mugenDue()   return windowOpen() and not mugenDone() end
+    -- Train is up the first 10 min of each hour. Leave for Map 2 up to LEAD secs early so we're
+    -- standing there before it opens; tJoinMugen then waits and boards on its own at minute 0.
+    local LEAD = 120
+    local function secIntoHour() return tick() % 3600 end
+    local function tripWindow()  local s = secIntoHour(); return s >= (3600 - LEAD) or s < 600 end
+    -- the clock hour whose train this cycle belongs to (pre-window belongs to the *next* hour)
+    local function targetHour()  local s = secIntoHour(); local h = math.floor(tick() / 3600); return (s >= (3600 - LEAD)) and (h + 1) or h end
+    local function mugenDone()   return isfile(MARKER) and tonumber(readfile(MARKER)) == targetHour() end
+    local function mugenDue()    return tripWindow() and not mugenDone() end
 
     -- only called while standing in the Lobby (a private-code join uses a lobby-only remote)
     local function joinMap2FromLobby()
@@ -3190,7 +3207,7 @@ do
                 if options.tGrindDie  and options.tGrindDie.Value  then options.tTimeDie:SetValue(true)    end
             elseif inMap2() then
                 if mugenDue() then
-                    writefile(MARKER, tostring(thisHour()))  -- claim the hour so mugen can't loop
+                    writefile(MARKER, tostring(targetHour())) -- claim the cycle so mugen can't loop
                     options.tAutoMugan:SetValue(true)        -- cutscene automation (needs a killaura preset)
                     options.tJoinMugen:SetValue(true)        -- boards the train during the window
                     if options.tGrindMugenTween and options.tGrindMugenTween.Value then
