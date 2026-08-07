@@ -2590,7 +2590,12 @@ InterfaceManager:BuildInterfaceSection(Tabs["Settings"])
 
 SaveManager:IgnoreThemeSettings()
 SaveManager:SetLibrary(Library)
-SaveManager:SetIgnoreIndexes({})
+-- Auto Grind owns these action toggles; excluding them from configs stops autoload from
+-- firing them in the wrong place (e.g. Auto Join Dungeon yanking you off Map 2 during mugen).
+SaveManager:SetIgnoreIndexes({
+    "tJoinDungeon", "tAutoDungeonMob", "tCollectOrb", "tAutoShop", "tAutoQuit", "tTimeDie",
+    "tJoinMugen", "tAutoMugan", "tQuitMugen", "tAutoMugenMob"
+})
 SaveManager:SetFolder("FireHub/PJS/" .. client.UserId)
 SaveManager:BuildConfigSection(Tabs["Settings"])
 Tabs["Settings"]:AddToggle("tAutoExec", {
@@ -3152,30 +3157,53 @@ end)
 loadSavedPlaylist()
 
 -- ============ AUTO GRIND (DUNGEONS + HOURLY MUGEN) ============
--- One master toggle. Routes through Lobby/Hub the same way you do by hand:
---   Lobby -> Hub -> queue Ouwigahara dungeon -> (quit dumps you at the Hub) -> repeat
---   each hour when Mugen is up: Hub -> Lobby -> Map 2 -> Full Auto Mugen -> Lobby -> Hub -> resume
--- Map 2 is reached FROM the Lobby (that's where a private-code join has to start).
--- Rides on Auto Execute: each teleport re-runs the script and the controller picks the next move.
+-- One master toggle that OWNS the Dungeon + Mugen toggles and enforces MUTUAL EXCLUSION:
+--   dungeon phase -> dungeon toggles ON, mugen toggles OFF
+--   mugen phase   -> mugen toggles ON, dungeon toggles OFF (so Auto Join Dungeon can't pull you away)
+-- Flow: Lobby -> Hub -> Auto Join Dungeon -> dungeon -> Hub -> repeat;
+--   each hour: Hub -> Lobby -> Map 2 -> Full Auto Mugen -> Lobby -> Hub -> resume.
+-- These action toggles are excluded from autoload (SetIgnoreIndexes) so they never auto-fire in
+-- the wrong place before the controller sets them. Rides on Auto Execute.
 do
     local LOBBY, HUB   = 5956785391, 9321822839
     local MAP2_PUBLIC  = 17387482786
     local MAP2_PRIVATE = 13883059853
     local MARKER       = "FireHub/PJS/lastmugenhour"
 
+    -- tJoinDungeon is the ENTRY (fired from the Hub); the rest run inside the dungeon.
+    local DUNGEON_FARM = {"tAutoDungeonMob", "tCollectOrb", "tAutoShop", "tAutoQuit", "tTimeDie"}
+    local MUGEN_SET    = {"tJoinMugen", "tAutoMugan", "tQuitMugen"}
+
     local function inLobby()    return placeId == LOBBY end
     local function inHub()      return placeId == HUB end
     local function inDungeon()  return placeId == 11468075017 or placeId == 11468034852 end
     local function inMap2()     return placeId == MAP2_PUBLIC or placeId == MAP2_PRIVATE end
+
     -- Train is up the first 10 min of each hour. Leave for Map 2 up to LEAD secs early so we're
     -- standing there before it opens; tJoinMugen then waits and boards on its own at minute 0.
     local LEAD = 120
     local function secIntoHour() return tick() % 3600 end
     local function tripWindow()  local s = secIntoHour(); return s >= (3600 - LEAD) or s < 600 end
-    -- the clock hour whose train this cycle belongs to (pre-window belongs to the *next* hour)
     local function targetHour()  local s = secIntoHour(); local h = math.floor(tick() / 3600); return (s >= (3600 - LEAD)) and (h + 1) or h end
     local function mugenDone()   return isfile(MARKER) and tonumber(readfile(MARKER)) == targetHour() end
     local function mugenDue()    return tripWindow() and not mugenDone() end
+
+    local function setSet(names, v) for _, n in ipairs(names) do if options[n] then options[n]:SetValue(v) end end end
+    local function setOne(n, v)     if options[n] then options[n]:SetValue(v) end end
+    local function allDungeonOff()  setOne("tJoinDungeon", false); setSet(DUNGEON_FARM, false) end
+    local function allMugenOff()    setSet(MUGEN_SET, false); setOne("tAutoMugenMob", false) end
+
+    -- tJoinDungeon's OnChanged is swallowed in the Hub (non-combat place), so fire the
+    -- teleport-circles remote directly until we get pulled into the dungeon.
+    local function joinDungeonFromHub()
+        setOne("tJoinDungeon", true)
+        task.spawn(function()
+            while options.tMasterFarm.Value and options.tJoinDungeon and options.tJoinDungeon.Value do
+                ReplicatedStorage:WaitForChild("TeleportCirclesEvent", math.huge):FireServer(options.dDungeonMode.Value)
+                task.wait(13)
+            end
+        end)
+    end
 
     -- only called while standing in the Lobby (a private-code join uses a lobby-only remote)
     local function joinMap2FromLobby()
@@ -3200,36 +3228,36 @@ do
             task.wait(1)
             if not options.tMasterFarm.Value then return end
             if inDungeon() then
-                options.tAutoDungeonMob:SetValue(true)
-                options.tAutoShop:SetValue(true)
-                options.tAutoQuit:SetValue(true)             -- ends the run -> back to Hub
-                if options.tGrindOrbs and options.tGrindOrbs.Value then options.tCollectOrb:SetValue(true) end
-                if options.tGrindDie  and options.tGrindDie.Value  then options.tTimeDie:SetValue(true)    end
+                allMugenOff()
+                setOne("tJoinDungeon", false)         -- entry toggle off now that we're inside
+                setSet(DUNGEON_FARM, true)            -- farm + shop + quit -> back to Hub
             elseif inMap2() then
                 if mugenDue() then
                     writefile(MARKER, tostring(targetHour())) -- claim the cycle so mugen can't loop
-                    options.tAutoMugan:SetValue(true)        -- cutscene automation (needs a killaura preset)
-                    options.tJoinMugen:SetValue(true)        -- boards the train during the window
-                    if options.tGrindMugenTween and options.tGrindMugenTween.Value then
-                        options.tAutoMugenMob:SetValue(true) -- melee: tween onto mobs during the fight
-                    end
+                    allDungeonOff()                   -- CRITICAL: dungeon set OFF so mugen can work
+                    setSet(MUGEN_SET, true)           -- board + fight + quit (needs a killaura preset)
+                    if options.tGrindMugenTween and options.tGrindMugenTween.Value then setOne("tAutoMugenMob", true) end
                 else
-                    TeleportService:Teleport(LOBBY, client)  -- done/closed -> head back via the Lobby
+                    allMugenOff(); allDungeonOff()
+                    TeleportService:Teleport(LOBBY, client)   -- done/closed -> head back via the Lobby
                 end
             elseif inHub() then
                 if mugenDue() then
-                    TeleportService:Teleport(LOBBY, client)  -- Map 2 is reached from the Lobby
+                    allDungeonOff()                   -- stop Auto Join Dungeon so we can leave for mugen
+                    TeleportService:Teleport(LOBBY, client)   -- Map 2 is reached from the Lobby
                 else
-                    linked.autoJoinGamemode("Ouwigahara")    -- queue a dungeon
+                    allMugenOff()
+                    joinDungeonFromHub()             -- Auto Join Dungeon (uses your Normal/Competitive mode)
                 end
             elseif inLobby() then
                 if mugenDue() then
-                    joinMap2FromLobby()                      -- go do the hourly mugen
+                    joinMap2FromLobby()               -- go do the hourly mugen
                 else
-                    TeleportService:Teleport(HUB, client)    -- go to the Hub for dungeons
+                    allDungeonOff(); allMugenOff()
+                    TeleportService:Teleport(HUB, client)     -- go to the Hub for dungeons
                 end
             else
-                TeleportService:Teleport(HUB, client)        -- anywhere else -> Hub
+                TeleportService:Teleport(HUB, client)         -- anywhere else -> Hub
             end
         end)
     end
@@ -3239,7 +3267,7 @@ local grindTab = Window:AddTab({ Title = "Auto Grind", Icon = "repeat" })
 
 grindTab:AddParagraph({
     Title = "How this works";
-    Content = "One toggle. Lobby -> Hub -> Ouwigahara dungeons back-to-back, and each hour when the Mugen train is up it routes Hub -> Lobby -> Map 2, runs a Full Auto Mugen, then comes back Lobby -> Hub and resumes.\n\nREQUIRES: Auto Execute ON (Settings tab), a killaura/godmode preset already set, and a party in the Hub (a solo party is fine). Set orb types + die-minutes in the Dungeon tab.";
+    Content = "One toggle that OWNS the Dungeon and Mugen tab toggles. It turns the whole dungeon set ON while farming and the whole mugen set ON during Mugen, and turns the other set OFF so they never collide - you don't flip those tab toggles yourself.\n\nFlow: Lobby -> Hub -> Auto Join Dungeon -> dungeon -> Hub -> repeat; each hour Hub -> Lobby -> Map 2 -> Full Auto Mugen -> back.\n\nREQUIRES: Auto Execute ON + a killaura preset set. Pick Join Mode / orb types / die-minutes / mugen teleporter in the Dungeon & Mugen tabs.";
 })
 
 grindTab:AddDropdown("dMap2Server", {
@@ -3254,18 +3282,6 @@ grindTab:AddInput("iMap2Code", {
     Placeholder = "Private + code = your server; Private + empty = random private";
     Numeric = false;
     Finished = true;
-})
-
-grindTab:AddToggle("tGrindOrbs", {
-    Title = "Collect orbs in dungeons";
-    Description = "Grabs the orb types picked in the Dungeon tab's Orbs dropdown";
-    Default = false;
-})
-
-grindTab:AddToggle("tGrindDie", {
-    Title = "Die after X minutes in dungeon";
-    Description = "Uses the minutes set in the Dungeon tab's die-time box";
-    Default = false;
 })
 
 grindTab:AddToggle("tGrindMugenTween", {
