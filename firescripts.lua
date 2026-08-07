@@ -3176,7 +3176,8 @@ do
 
     local function inLobby()    return placeId == LOBBY end
     local function inHub()      return placeId == HUB end
-    local function inDungeon()  return placeId == 11468075017 or placeId == 11468034852 end
+    local function inDungeon()  return placeId == 11468075017 end          -- Ouwigahara dungeon
+    local function inMugen()    return placeId == 11468034852 end          -- Mugen Train place
     local function inMap2()     return placeId == MAP2_PUBLIC or placeId == MAP2_PRIVATE end
 
     -- Train is up the first 10 min of each hour. Leave for Map 2 up to LEAD secs early so we're
@@ -3212,6 +3213,9 @@ do
         if linked._farmRan then return end           -- once per execution (Callback + startup call)
         linked._farmRan = true
         task.spawn(function()
+            -- kill the dungeon toggles the instant we land in Map 2 or the Mugen place, before
+            -- anything else, so Auto Join Dungeon / Auto Tween can't fire during mugen
+            if inMap2() or inMugen() then allDungeonOff() end
             repeat task.wait() until game:IsLoaded()
             task.wait(1)
             if not options.tMasterFarm.Value then return end
@@ -3219,6 +3223,10 @@ do
                 allMugenOff()
                 setOne("tJoinDungeon", false)         -- entry toggle off now that we're inside
                 setSet(DUNGEON_FARM, true)            -- farm + shop + quit -> back to Hub
+            elseif inMugen() then
+                allDungeonOff()                       -- no dungeon stuff in the Mugen place
+                setSet(MUGEN_SET, true)               -- Full Auto Solo Mugen + Auto Quit + Auto Join
+                if options.tGrindMugenTween and options.tGrindMugenTween.Value then setOne("tAutoMugenMob", true) end
             elseif inMap2() then
                 if mugenDue() then
                     writefile(MARKER, tostring(targetHour())) -- claim the cycle so mugen can't loop
