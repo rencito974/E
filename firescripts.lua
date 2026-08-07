@@ -3193,6 +3193,9 @@ do
                     writefile(MARKER, tostring(thisHour()))  -- claim the hour so mugen can't loop
                     options.tAutoMugan:SetValue(true)        -- cutscene automation (needs a killaura preset)
                     options.tJoinMugen:SetValue(true)        -- boards the train during the window
+                    if options.tGrindMugenTween and options.tGrindMugenTween.Value then
+                        options.tAutoMugenMob:SetValue(true) -- melee: tween onto mobs during the fight
+                    end
                 else
                     TeleportService:Teleport(LOBBY, client)  -- done/closed -> head back via the Lobby
                 end
@@ -3245,6 +3248,12 @@ grindTab:AddToggle("tGrindOrbs", {
 grindTab:AddToggle("tGrindDie", {
     Title = "Die after X minutes in dungeon";
     Description = "Uses the minutes set in the Dungeon tab's die-time box";
+    Default = false;
+})
+
+grindTab:AddToggle("tGrindMugenTween", {
+    Title = "Tween onto mobs in Mugen (melee builds)";
+    Description = "Only if your killaura isn't ranged. Can fight the Full Auto cutscene steps - test it.";
     Default = false;
 })
 
