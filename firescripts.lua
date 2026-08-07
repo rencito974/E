@@ -690,8 +690,9 @@ linked.findMyParty = function()
     end
 end
 
-linked.autoJoinGamemode = function()
+linked.autoJoinGamemode = function(mode)
     if placeId ~= 9321822839 then return end
+    mode = mode or options.dHubMode.Value          -- caller can force a mode (grind uses "Ouwigahara")
     task.spawn(function()
         local party, t0 = nil, os.clock()
         repeat
@@ -704,9 +705,9 @@ linked.autoJoinGamemode = function()
         end
         local t1 = os.clock()
         repeat
-            ReplicatedStorage:WaitForChild("change_game_mode"):FireServer(party.gamemodeequiped, options.dHubMode.Value)
+            ReplicatedStorage:WaitForChild("change_game_mode"):FireServer(party.gamemodeequiped, mode)
             task.wait(0.3)
-        until party.gamemodeequiped.Value == options.dHubMode.Value or (os.clock() - t1 > 15)
+        until party.gamemodeequiped.Value == mode or (os.clock() - t1 > 15)
         ReplicatedStorage:WaitForChild("queu_up"):FireServer()
     end)
 end
@@ -3139,30 +3140,34 @@ end)
 loadSavedPlaylist()
 
 -- ============ AUTO GRIND (DUNGEONS + HOURLY MUGEN) ============
--- One master toggle, based out of Map 2. Farms dungeons non-stop, and each hour while
--- the Mugen train is up it runs a full auto Mugen, then returns to dungeons. Crosses
--- places (Map2 -> dungeon -> back, Map2 -> mugen -> back) so it rides on Auto Execute:
--- each teleport re-runs the script and the controller below picks the next action.
+-- One master toggle. Routes through Lobby/Hub the same way you do by hand:
+--   Lobby -> Hub -> queue Ouwigahara dungeon -> (quit dumps you at the Hub) -> repeat
+--   each hour when Mugen is up: Hub -> Lobby -> Map 2 -> Full Auto Mugen -> Lobby -> Hub -> resume
+-- Map 2 is reached FROM the Lobby (that's where a private-code join has to start).
+-- Rides on Auto Execute: each teleport re-runs the script and the controller picks the next move.
 do
+    local LOBBY, HUB   = 5956785391, 9321822839
     local MAP2_PUBLIC  = 17387482786
     local MAP2_PRIVATE = 13883059853
-    local LOBBY        = 5956785391
     local MARKER       = "FireHub/PJS/lastmugenhour"
 
-    local function inMap2()    return placeId == MAP2_PUBLIC or placeId == MAP2_PRIVATE end
-    local function inDungeon() return placeId == 11468075017 or placeId == 11468034852 end
+    local function inLobby()    return placeId == LOBBY end
+    local function inHub()      return placeId == HUB end
+    local function inDungeon()  return placeId == 11468075017 or placeId == 11468034852 end
+    local function inMap2()     return placeId == MAP2_PUBLIC or placeId == MAP2_PRIVATE end
     local function windowOpen() local t = (tick() / 60) % 60; return t > 0 and t < 10 end
-    local function thisHour()  return math.floor(tick() / 3600) end
-    local function mugenDone() return isfile(MARKER) and tonumber(readfile(MARKER)) == thisHour() end
+    local function thisHour()   return math.floor(tick() / 3600) end
+    local function mugenDone()  return isfile(MARKER) and tonumber(readfile(MARKER)) == thisHour() end
+    local function mugenDue()   return windowOpen() and not mugenDone() end
 
-    -- private servers can only be joined from the lobby; public can be reached from anywhere
-    linked.goToMap2 = function()
-        local code = (options.iFarmCode and options.iFarmCode.Value) or ""
-        if code ~= "" then
-            if placeId == LOBBY then
+    -- only called while standing in the Lobby (a private-code join uses a lobby-only remote)
+    local function joinMap2FromLobby()
+        if options.dMap2Server and options.dMap2Server.Value == "Private" then
+            local code = (options.iMap2Code and options.iMap2Code.Value) or ""
+            if code ~= "" then
                 ReplicatedStorage:WaitForChild("handle_privateserver"):InvokeServer("join", code, MAP2_PUBLIC)
             else
-                TeleportService:Teleport(LOBBY, client)
+                TeleportService:Teleport(MAP2_PRIVATE, client)   -- random low-pop private, no code
             end
         else
             TeleportService:Teleport(MAP2_PUBLIC, client)
@@ -3177,20 +3182,34 @@ do
             repeat task.wait() until game:IsLoaded()
             task.wait(1)
             if not options.tMasterFarm.Value then return end
-            if inMap2() then
-                if windowOpen() and not mugenDone() then
-                    writefile(MARKER, tostring(thisHour()))  -- claim the hour up front so mugen can't loop
-                    options.tAutoMugan:SetValue(true)        -- cutscene automation (needs a killaura preset)
-                    options.tJoinMugen:SetValue(true)        -- walks into the train during the window
-                else
-                    options.tJoinDungeon:SetValue(true)      -- queue a dungeon
-                end
-            elseif inDungeon() then
+            if inDungeon() then
                 options.tAutoDungeonMob:SetValue(true)
                 options.tAutoShop:SetValue(true)
-                options.tAutoQuit:SetValue(true)             -- ends the run; that quit dumps us at the Hub
+                options.tAutoQuit:SetValue(true)             -- ends the run -> back to Hub
+                if options.tGrindOrbs and options.tGrindOrbs.Value then options.tCollectOrb:SetValue(true) end
+                if options.tGrindDie  and options.tGrindDie.Value  then options.tTimeDie:SetValue(true)    end
+            elseif inMap2() then
+                if mugenDue() then
+                    writefile(MARKER, tostring(thisHour()))  -- claim the hour so mugen can't loop
+                    options.tAutoMugan:SetValue(true)        -- cutscene automation (needs a killaura preset)
+                    options.tJoinMugen:SetValue(true)        -- boards the train during the window
+                else
+                    TeleportService:Teleport(LOBBY, client)  -- done/closed -> head back via the Lobby
+                end
+            elseif inHub() then
+                if mugenDue() then
+                    TeleportService:Teleport(LOBBY, client)  -- Map 2 is reached from the Lobby
+                else
+                    linked.autoJoinGamemode("Ouwigahara")    -- queue a dungeon
+                end
+            elseif inLobby() then
+                if mugenDue() then
+                    joinMap2FromLobby()                      -- go do the hourly mugen
+                else
+                    TeleportService:Teleport(HUB, client)    -- go to the Hub for dungeons
+                end
             else
-                linked.goToMap2()                            -- hub/lobby/elsewhere -> head back to Map 2
+                TeleportService:Teleport(HUB, client)        -- anywhere else -> Hub
             end
         end)
     end
@@ -3200,14 +3219,33 @@ local grindTab = Window:AddTab({ Title = "Auto Grind", Icon = "repeat" })
 
 grindTab:AddParagraph({
     Title = "How this works";
-    Content = "One toggle. Bases out of Map 2: farms dungeons non-stop, and each hour when the Mugen train is up it runs a Full Auto Mugen, then goes back to dungeons.\n\nREQUIRES: Auto Execute ON (Settings tab) + a killaura or godmode preset already set. Leave the code box empty to use public Map 2; fill it to use your private server.";
+    Content = "One toggle. Lobby -> Hub -> Ouwigahara dungeons back-to-back, and each hour when the Mugen train is up it routes Hub -> Lobby -> Map 2, runs a Full Auto Mugen, then comes back Lobby -> Hub and resumes.\n\nREQUIRES: Auto Execute ON (Settings tab), a killaura/godmode preset already set, and a party in the Hub (a solo party is fine). Set orb types + die-minutes in the Dungeon tab.";
 })
 
-grindTab:AddInput("iFarmCode", {
-    Title = "Private Map 2 code (optional)";
-    Placeholder = "Leave empty for public Map 2";
+grindTab:AddDropdown("dMap2Server", {
+    Title = "Map 2 server (for Mugen)";
+    Values = { "Public", "Private" };
+    Default = "Public";
+    Multi = false;
+})
+
+grindTab:AddInput("iMap2Code", {
+    Title = "Private server code (optional)";
+    Placeholder = "Private + code = your server; Private + empty = random private";
     Numeric = false;
     Finished = true;
+})
+
+grindTab:AddToggle("tGrindOrbs", {
+    Title = "Collect orbs in dungeons";
+    Description = "Grabs the orb types picked in the Dungeon tab's Orbs dropdown";
+    Default = false;
+})
+
+grindTab:AddToggle("tGrindDie", {
+    Title = "Die after X minutes in dungeon";
+    Description = "Uses the minutes set in the Dungeon tab's die-time box";
+    Default = false;
 })
 
 grindTab:AddToggle("tMasterFarm", {
