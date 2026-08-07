@@ -3138,6 +3138,90 @@ end)
 -- Load on start
 loadSavedPlaylist()
 
+-- ============ AUTO GRIND (DUNGEONS + HOURLY MUGEN) ============
+-- One master toggle, based out of Map 2. Farms dungeons non-stop, and each hour while
+-- the Mugen train is up it runs a full auto Mugen, then returns to dungeons. Crosses
+-- places (Map2 -> dungeon -> back, Map2 -> mugen -> back) so it rides on Auto Execute:
+-- each teleport re-runs the script and the controller below picks the next action.
+do
+    local MAP2_PUBLIC  = 17387482786
+    local MAP2_PRIVATE = 13883059853
+    local LOBBY        = 5956785391
+    local MARKER       = "FireHub/PJS/lastmugenhour"
+
+    local function inMap2()    return placeId == MAP2_PUBLIC or placeId == MAP2_PRIVATE end
+    local function inDungeon() return placeId == 11468075017 or placeId == 11468034852 end
+    local function windowOpen() local t = (tick() / 60) % 60; return t > 0 and t < 10 end
+    local function thisHour()  return math.floor(tick() / 3600) end
+    local function mugenDone() return isfile(MARKER) and tonumber(readfile(MARKER)) == thisHour() end
+
+    -- private servers can only be joined from the lobby; public can be reached from anywhere
+    linked.goToMap2 = function()
+        local code = (options.iFarmCode and options.iFarmCode.Value) or ""
+        if code ~= "" then
+            if placeId == LOBBY then
+                ReplicatedStorage:WaitForChild("handle_privateserver"):InvokeServer("join", code, MAP2_PUBLIC)
+            else
+                TeleportService:Teleport(LOBBY, client)
+            end
+        else
+            TeleportService:Teleport(MAP2_PUBLIC, client)
+        end
+    end
+
+    linked.runFarmController = function()
+        if not (options.tMasterFarm and options.tMasterFarm.Value) then return end
+        if linked._farmRan then return end           -- once per execution (Callback + startup call)
+        linked._farmRan = true
+        task.spawn(function()
+            repeat task.wait() until game:IsLoaded()
+            task.wait(1)
+            if not options.tMasterFarm.Value then return end
+            if inMap2() then
+                if windowOpen() and not mugenDone() then
+                    writefile(MARKER, tostring(thisHour()))  -- claim the hour up front so mugen can't loop
+                    options.tAutoMugan:SetValue(true)        -- cutscene automation (needs a killaura preset)
+                    options.tJoinMugen:SetValue(true)        -- walks into the train during the window
+                else
+                    options.tJoinDungeon:SetValue(true)      -- queue a dungeon
+                end
+            elseif inDungeon() then
+                options.tAutoDungeonMob:SetValue(true)
+                options.tAutoShop:SetValue(true)
+                options.tAutoQuit:SetValue(true)             -- ends the run; that quit dumps us at the Hub
+            else
+                linked.goToMap2()                            -- hub/lobby/elsewhere -> head back to Map 2
+            end
+        end)
+    end
+end
+
+local grindTab = Window:AddTab({ Title = "Auto Grind", Icon = "repeat" })
+
+grindTab:AddParagraph({
+    Title = "How this works";
+    Content = "One toggle. Bases out of Map 2: farms dungeons non-stop, and each hour when the Mugen train is up it runs a Full Auto Mugen, then goes back to dungeons.\n\nREQUIRES: Auto Execute ON (Settings tab) + a killaura or godmode preset already set. Leave the code box empty to use public Map 2; fill it to use your private server.";
+})
+
+grindTab:AddInput("iFarmCode", {
+    Title = "Private Map 2 code (optional)";
+    Placeholder = "Leave empty for public Map 2";
+    Numeric = false;
+    Finished = true;
+})
+
+grindTab:AddToggle("tMasterFarm", {
+    Title = "Auto Dungeon + Hourly Mugen";
+    Default = false;
+    Callback = function(Value)
+        if Value then
+            linked.runFarmController()
+        else
+            linked._farmRan = false
+        end
+    end
+})
+
 Window:SelectTab(1)
 
 if not linked.AttackPlace then
@@ -3157,12 +3241,20 @@ end
 
 -- these run the auto-join actions DIRECTLY on (re)join, bypassing the empty-handler
 -- loop above that swallows OnChanged in the lobby/hub. this is what makes autoload work.
-if placeId == 5956785391 and options.tAutoJoin and options.tAutoJoin.Value then
-    linked.autoJoinServer()
+-- skipped while Auto Grind is on, since that controller owns navigation (avoids a hub tug-of-war).
+if not (options.tMasterFarm and options.tMasterFarm.Value) then
+    if placeId == 5956785391 and options.tAutoJoin and options.tAutoJoin.Value then
+        linked.autoJoinServer()
+    end
+
+    if placeId == 9321822839 and options.tHubJoin and options.tHubJoin.Value then
+        linked.autoJoinGamemode()
+    end
 end
 
-if placeId == 9321822839 and options.tHubJoin and options.tHubJoin.Value then
-    linked.autoJoinGamemode()
+-- auto-grind controller: dungeons + hourly mugen, based out of Map 2 (self-gates on the toggle)
+if linked.runFarmController then
+    linked.runFarmController()
 end
 
 
