@@ -3193,11 +3193,23 @@ do
     local function allDungeonOff()  setOne("tJoinDungeon", false); setSet(DUNGEON_FARM, false) end
     local function allMugenOff()    setSet(MUGEN_SET, false); setOne("tAutoMugenMob", false) end
 
-    -- tJoinDungeon's OnChanged is swallowed in the Hub (non-combat place), so fire the
-    -- teleport-circles remote directly until we get pulled into the dungeon.
+    -- In the Hub you must first SELECT the Ouwigahara gamemode on your party, or the teleport-
+    -- circles join just sits there. (tJoinDungeon's OnChanged is also swallowed in the Hub as a
+    -- non-combat place, so we fire the remotes directly.)
     local function joinDungeonFromHub()
         setOne("tJoinDungeon", true)
         task.spawn(function()
+            -- 1) set your party's gamemode to Ouwigahara
+            local party, t0 = nil, os.clock()
+            repeat party = linked.findMyParty(); if not party then task.wait(0.5) end until party or (os.clock() - t0 > 20)
+            if party then
+                local t1 = os.clock()
+                repeat
+                    ReplicatedStorage:WaitForChild("change_game_mode"):FireServer(party.gamemodeequiped, "Ouwigahara")
+                    task.wait(0.3)
+                until party.gamemodeequiped.Value == "Ouwigahara" or (os.clock() - t1 > 10)
+            end
+            -- 2) join with your Normal/Competitive mode until we get pulled into the dungeon
             while options.tMasterFarm.Value and options.tJoinDungeon and options.tJoinDungeon.Value do
                 ReplicatedStorage:WaitForChild("TeleportCirclesEvent", math.huge):FireServer(options.dDungeonMode.Value)
                 task.wait(13)
