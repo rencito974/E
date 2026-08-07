@@ -3259,34 +3259,34 @@ do
     end
 end
 
-local grindTab = Window:AddTab({ Title = "Auto Grind", Icon = "repeat" })
+Tabs["Auto Farm"]:AddSection("Auto Grind")
 
-grindTab:AddParagraph({
-    Title = "How this works";
-    Content = "One toggle that OWNS the Dungeon and Mugen tab toggles. It turns the whole dungeon set ON while farming and the whole mugen set ON during Mugen, and turns the other set OFF so they never collide - you don't flip those tab toggles yourself.\n\nFlow: Lobby -> Hub -> Auto Join Dungeon -> dungeon -> Hub -> repeat; each hour Hub -> Lobby -> Map 2 -> Full Auto Mugen -> back.\n\nREQUIRES: Auto Execute ON + a killaura preset set. Pick Join Mode / orb types / die-minutes / mugen teleporter in the Dungeon & Mugen tabs.";
+Tabs["Auto Farm"]:AddParagraph({
+    Title = "How to use Auto Grind";
+    Content = "Farms Ouwigahara dungeons non-stop, breaks for the Mugen train each hour, then returns to dungeons - on its own, across teleports.\n\nSETUP (turn these on, then save them as an autoload config in the Settings tab - that autoload is what keeps it alive across teleports):\n- Auto Execute (Settings tab)\n- A RANGED killaura + Killaura Toggle (Kill Aura tab)\n- Auto Dungeon + Hourly Mugen (below)\n- Set Join Mode / Orbs / Die Time in the Dungeon tab, and Mugen Teleporter in the Mugen tab\n\nLeave every Dungeon and Mugen action toggle OFF - Auto Grind flips them on and off for you per place. Start it from anywhere; it routes itself to the Hub and begins.";
 })
 
-grindTab:AddDropdown("dMap2Server", {
+Tabs["Auto Farm"]:AddDropdown("dMap2Server", {
     Title = "Map 2 server (for Mugen)";
     Values = { "Public", "Private" };
     Default = "Public";
     Multi = false;
 })
 
-grindTab:AddInput("iMap2Code", {
+Tabs["Auto Farm"]:AddInput("iMap2Code", {
     Title = "Private server code (optional)";
     Placeholder = "Private + code = your server; Private + empty = random private";
     Numeric = false;
     Finished = true;
 })
 
-grindTab:AddToggle("tGrindMugenTween", {
+Tabs["Auto Farm"]:AddToggle("tGrindMugenTween", {
     Title = "Tween onto mobs in Mugen (melee builds)";
     Description = "Only if your killaura isn't ranged. Can fight the Full Auto cutscene steps - test it.";
     Default = false;
 })
 
-grindTab:AddToggle("tMasterFarm", {
+Tabs["Auto Farm"]:AddToggle("tMasterFarm", {
     Title = "Auto Dungeon + Hourly Mugen";
     Default = false;
     Callback = function(Value)
