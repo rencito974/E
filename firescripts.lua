@@ -3268,7 +3268,6 @@ do
                     TeleportService:Teleport(LOBBY, client)   -- Map 2 is reached from the Lobby
                 else
                     allMugenOff()
-                    setOne("tJoinDungeon", true)          -- Auto Join Dungeon ON (entry toggle; turns itself off inside)
                     linked.autoJoinGamemode("Ouwigahara") -- select Ouwigahara gamemode + queue into the dungeon
                 end
             elseif inLobby() then
