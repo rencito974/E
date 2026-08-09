@@ -3214,7 +3214,7 @@ do
     local function mugenDone()   return isfile(MARKER) and tonumber(readfile(MARKER)) == targetHour() end
     local function mugenDue()    return tripWindow() and not mugenDone() end
 
-    local function setSet(names, v) for _, n in ipairs(names) do if options[n] then options[n]:SetValue(v) end end end
+    local function setSet(names, v) for _, n in ipairs(names) do if options[n] then pcall(function() options[n]:SetValue(v) end) end end end
     local function setOne(n, v)     if options[n] then options[n]:SetValue(v) end end
     local function allDungeonOff()  setOne("tJoinDungeon", false); setSet(DUNGEON_FARM, false) end
     local function allMugenOff()    setSet(MUGEN_SET, false); setOne("tAutoMugenMob", false) end
