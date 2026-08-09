@@ -3246,8 +3246,8 @@ do
             if not options.tMasterFarm.Value then return end
             if inDungeon() then
                 allMugenOff()
-                setSet(DUNGEON_FARM, true)            -- farm + shop + quit -> back to Hub
-                setOne("tJoinDungeon", true)          -- circles live in this place; keep stomping the portal
+                setOne("tJoinDungeon", true)          -- circles live in this place; stomp the portal FIRST
+                setSet(DUNGEON_FARM, true)            -- then farm + shop + quit -> back to Hub
             elseif inMugen() then
                 allDungeonOff()                       -- no dungeon stuff in the Mugen place
                 setSet(MUGEN_SET, true)               -- Full Auto Solo Mugen + Auto Quit + Auto Join
@@ -3351,6 +3351,13 @@ if not (options.tMasterFarm and options.tMasterFarm.Value) then
     if placeId == 9321822839 and options.tHubJoin and options.tHubJoin.Value then
         linked.autoJoinGamemode()
     end
+end
+
+-- Auto Grind on + we (re)joined straight into the dungeon place: the Normal/Competitive circles
+-- are HERE (same place id), so flip Auto Join Dungeon on immediately to stomp the portal, without
+-- waiting on the controller pass (which can be delayed or die before it reaches the toggle).
+if options.tMasterFarm and options.tMasterFarm.Value and placeId == 11468075017 then
+    if options.tJoinDungeon then options.tJoinDungeon:SetValue(true) end
 end
 
 -- auto-grind controller: dungeons + hourly mugen, based out of Map 2 (self-gates on the toggle)
