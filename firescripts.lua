@@ -1502,6 +1502,31 @@ Tabs["Misc"]:AddToggle("tFx", {
     end
 end)
 
+Tabs["Misc"]:AddToggle("tSwampTrap", {
+    Title = "Spam Swamp Trap Damage on Self";
+    Description = "spams swamp trap at everyone around you on loop";
+    Default = false;
+}):OnChanged(function(Value)
+    if Value then
+        task.spawn(function()
+            while options.tSwampTrap.Value do
+                task.wait()
+                local char = client.Character
+                local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    local args = {
+                        [1] = "swamp_trap_damage",
+                        [2] = char,
+                        [3] = hrp.CFrame * CFrame.Angles(1.228732031677282e-07, -1.199800729751587, 8.192461109501892e-08)
+                    }
+                    Handle_Initiate_S:FireServer(unpack(args))
+                end
+                task.wait(0.1)
+            end
+        end)
+    end
+end)
+
 Tabs["Misc"]:AddButton({
     Title = getTrans("bTpToMuzan", "Title");
     Description = getTrans("bTpToMuzan", "Desc");
@@ -3243,6 +3268,7 @@ do
                     TeleportService:Teleport(LOBBY, client)   -- Map 2 is reached from the Lobby
                 else
                     allMugenOff()
+                    setOne("tJoinDungeon", true)          -- Auto Join Dungeon ON (entry toggle; turns itself off inside)
                     linked.autoJoinGamemode("Ouwigahara") -- select Ouwigahara gamemode + queue into the dungeon
                 end
             elseif inLobby() then
@@ -3263,7 +3289,7 @@ Tabs["Auto Farm"]:AddSection("Auto Grind")
 
 Tabs["Auto Farm"]:AddParagraph({
     Title = "How to use Auto Grind";
-    Content = "Farms Ouwigahara dungeons non-stop, breaks for the Mugen train each hour, then returns to dungeons - on its own, across teleports.\n\nSETUP (turn these on, then save them as an autoload config in the Settings tab - that autoload is what keeps it alive across teleports):\n- Auto Execute (Settings tab)\n- A RANGED killaura + Killaura Toggle (Kill Aura tab)\n- Auto Dungeon + Hourly Mugen (below)\n- Set Join Mode / Orbs / Die Time in the Dungeon tab, and Mugen Teleporter in the Mugen tab\n\nLeave every Dungeon and Mugen action toggle OFF - Auto Grind flips them on and off for you per place. Start it from anywhere; it routes itself to the Hub and begins.";
+    Content = "Farms Ouwigahara dungeons non stop, breaks for the Mugen train each hour, then returns to dungeons on its own.\n\nSETUP (turn these on, then save them as an autoload config in the Settings tab that autoload is what keeps it alive):\n- Auto Execute (Settings tab)\n- A RANGED killaura + Killaura Toggle (Kill Aura tab)\n- Auto Dungeon + Hourly Mugen (below)\n- Set Join Mode / Orbs / Die Time in the Dungeon tab, and Mugen Teleporter in the Mugen tab\n\nLeave every Dungeon and Mugen action toggle OFF - Auto Grind flips them on and off for you per place. Start it from anywhere; it routes itself to the Hub and begins.";
 })
 
 Tabs["Auto Farm"]:AddDropdown("dMap2Server", {
