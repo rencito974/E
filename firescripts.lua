@@ -2618,7 +2618,7 @@ SaveManager:SetLibrary(Library)
 -- Auto Grind owns these action toggles; excluding them from configs stops autoload from
 -- firing them in the wrong place (e.g. Auto Join Dungeon yanking you off Map 2 during mugen).
 SaveManager:SetIgnoreIndexes({
-    "tJoinDungeon", "tAutoDungeonMob", "tCollectOrb", "tAutoShop", "tAutoQuit", "tTimeDie",
+    "tJoinDungeon", "tAutoDungeonMob", "tCollectOrb", "tAutoShop", "tAutoQuit",
     "tJoinMugen", "tAutoMugan", "tQuitMugen", "tAutoMugenMob"
 })
 SaveManager:SetFolder("FireHub/PJS/" .. client.UserId)
@@ -3268,6 +3268,7 @@ do
                     TeleportService:Teleport(LOBBY, client)   -- Map 2 is reached from the Lobby
                 else
                     allMugenOff()
+                    setOne("tJoinDungeon", true)          -- arm it in the hub and leave it on into the circles
                     linked.autoJoinGamemode("Ouwigahara") -- select Ouwigahara gamemode + queue into the dungeon
                 end
             elseif inLobby() then
