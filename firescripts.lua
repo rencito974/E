@@ -3246,8 +3246,8 @@ do
             if not options.tMasterFarm.Value then return end
             if inDungeon() then
                 allMugenOff()
-                setOne("tJoinDungeon", false)         -- entry toggle off now that we're inside
                 setSet(DUNGEON_FARM, true)            -- farm + shop + quit -> back to Hub
+                setOne("tJoinDungeon", true)          -- circles live in this place; keep stomping the portal
             elseif inMugen() then
                 allDungeonOff()                       -- no dungeon stuff in the Mugen place
                 setSet(MUGEN_SET, true)               -- Full Auto Solo Mugen + Auto Quit + Auto Join
