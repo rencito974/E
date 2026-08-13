@@ -2619,7 +2619,7 @@ SaveManager:SetLibrary(Library)
 -- firing them in the wrong place (e.g. Auto Join Dungeon yanking you off Map 2 during mugen).
 SaveManager:SetIgnoreIndexes({
     "tJoinDungeon", "tAutoDungeonMob", "tCollectOrb", "tAutoShop", "tAutoQuit",
-    "tJoinMugen", "tAutoMugan", "tQuitMugen", "tAutoMugenMob"
+    "tJoinMugen", "tAutoMugan", "tQuitMugen", "tAutoMugenMob", "tAutoHell"
 })
 SaveManager:SetFolder("FireHub/PJS/" .. client.UserId)
 SaveManager:BuildConfigSection(Tabs["Settings"])
@@ -3217,7 +3217,8 @@ do
     local function setSet(names, v) for _, n in ipairs(names) do if options[n] then task.spawn(function() options[n]:SetValue(v) end) end end end
     local function setOne(n, v)     if options[n] then options[n]:SetValue(v) end end
     local function allDungeonOff()  setOne("tJoinDungeon", false); setSet(DUNGEON_FARM, false) end
-    local function allMugenOff()    setSet(MUGEN_SET, false); setOne("tAutoMugenMob", false) end
+    -- tAutoHell reset here too so it re-fires (false->true) on the next Mugen entry
+    local function allMugenOff()    setSet(MUGEN_SET, false); setOne("tAutoMugenMob", false); setOne("tAutoHell", false) end
 
     -- only called while standing in the Lobby (a private-code join uses a lobby-only remote)
     local function joinMap2FromLobby()
@@ -3251,6 +3252,7 @@ do
             elseif inMugen() then
                 allDungeonOff()                       -- no dungeon stuff in the Mugen place
                 setSet(MUGEN_SET, true)               -- Full Auto Solo Mugen + Auto Quit + Auto Join
+                if options.tGrindHell and options.tGrindHell.Value then setOne("tAutoHell", true) end   -- hit the HardMode altar before the run
                 if options.tGrindMugenTween and options.tGrindMugenTween.Value then setOne("tAutoMugenMob", true) end
             elseif inMap2() then
                 if mugenDue() then
@@ -3309,6 +3311,12 @@ Tabs["Auto Farm"]:AddInput("iMap2Code", {
 Tabs["Auto Farm"]:AddToggle("tGrindMugenTween", {
     Title = "Tween onto mobs in Mugen (melee builds)";
     Description = "Only if your killaura isn't ranged. Can fight the Full Auto cutscene steps - test it.";
+    Default = false;
+})
+
+Tabs["Auto Farm"]:AddToggle("tGrindHell", {
+    Title = "Activate Hell Mode each Mugen run";
+    Description = "Auto Grind hits the HardMode altar on entering the train. Harder fight - only if your build can clear it.";
     Default = false;
 })
 
