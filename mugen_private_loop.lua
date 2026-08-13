@@ -19,12 +19,12 @@
 -- ============================================================================
 
 --========================= CONFIG - EDIT THESE ==============================
-local PRIVATE_CODE      = ""      -- Map 2 private server code. "" = random low-pop private.
+local PRIVATE_CODE      = "6RgvfNL9"      -- Map 2 private server code. "" = random low-pop private.
 local TELEPORTER_SLOT   = 1       -- which Mugen train teleporter to board (1-10, clamped to what exists)
 local FORCE_LEAVE_AFTER = 0       -- secs after boarding to force-leave regardless of run state. 0 = wait for the run to end.
 local MAX_RUN_SECONDS   = 720     -- hard cap in the Mugen place before bailing out (never hang forever)
 local TWEEN_SPEED       = 250     -- studs/sec for the walk onto the teleporter (higher = snappier)
-local LOADER_URL        = ""      -- YOUR raw github link to THIS file, e.g. "https://raw.githubusercontent.com/you/repo/main/mugen_private_loop.lua"
+local LOADER_URL        = "https://raw.githubusercontent.com/rencito974/E/refs/heads/main/mugen_private_loop.lua"      -- YOUR raw github link to THIS file, e.g. "https://raw.githubusercontent.com/you/repo/main/mugen_private_loop.lua"
 --============================================================================
 
 repeat task.wait() until game:IsLoaded()
