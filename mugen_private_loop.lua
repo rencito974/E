@@ -24,6 +24,7 @@ local TELEPORTER_SLOT   = 1       -- which Mugen train teleporter to board (1-10
 local FORCE_LEAVE_AFTER = 0       -- secs after boarding to force-leave regardless of run state. 0 = wait for the run to end.
 local MAX_RUN_SECONDS   = 720     -- hard cap in the Mugen place before bailing out (never hang forever)
 local JUMP_ANTIAFK      = true   -- also jump every 60s (resets game-side AFK detection; may nudge you mid-run)
+local LEADER_NAME       = "artu2" -- alts only board the train while THIS player is in their server. "" = no gate.
 local TWEEN_SPEED       = 250     -- studs/sec for the walk onto the teleporter (higher = snappier)
 local LOADER_URL        = "https://raw.githubusercontent.com/rencito974/E/refs/heads/main/mugen_private_loop.lua"      -- YOUR raw github link to THIS file, e.g. "https://raw.githubusercontent.com/you/repo/main/mugen_private_loop.lua"
 --============================================================================
@@ -169,6 +170,21 @@ local function inTrainWindow()
     return minuteOfHour > 0 and minuteOfHour < 10
 end
 
+-- Leader gate: never board unless LEADER_NAME is in this server (so an alt never
+-- rides Mugen alone if the main account isn't there). No gate if it's empty, and
+-- the leader account itself always passes. Case-insensitive; matches name or display.
+local function leaderPresent()
+    if LEADER_NAME == "" then return true end
+    local want = LEADER_NAME:lower()
+    if client.Name:lower() == want then return true end
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p.Name:lower() == want or p.DisplayName:lower() == want then
+            return true
+        end
+    end
+    return false
+end
+
 local function pickTeleporter()
     local mt = workspace:WaitForChild("MugenTrain", math.huge)
     local tps = mt:WaitForChild("Teleporters", math.huge)
@@ -185,8 +201,18 @@ end
 
 local function boardTrain()
     local helper = farmHelper()
-    -- hold here (kept alive by anti-afk) until the boarding window opens
-    while not inTrainWindow() do task.wait(0.5) end
+    -- hold here (kept alive by anti-afk) until BOTH the train window is open AND the
+    -- leader is in the server. If artu2 isn't here, we never board - we just wait.
+    local warned = false
+    while not (inTrainWindow() and leaderPresent()) do
+        if inTrainWindow() and not leaderPresent() and not warned then
+            warn("[MugenLoop] train window open but leader '" .. LEADER_NAME .. "' not in server - holding, will not board.")
+            warned = true
+        elseif leaderPresent() then
+            warned = false
+        end
+        task.wait(0.5)
+    end
 
     pcall(function()
         local data = ReplicatedStorage:FindFirstChild("Player_Data")
