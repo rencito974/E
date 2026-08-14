@@ -15,7 +15,7 @@
 -- ============================================================================
 
 --========================= CONFIG - EDIT THESE ==============================
-local TARGET_MAP   = "Map 2"   -- name below, OR a raw place id number. Where you want to go.
+local TARGET_MAP   = "map 2 private"   -- name below, OR a raw place id number. Where you want to go.
 local PRIVATE_CODE = "6RgvfNL9"        -- private server code. "" = public/random teleport (no code).
 local LOADER_URL   = "https://raw.githubusercontent.com/rencito974/E/refs/heads/main/map_joiner.lua"        -- raw github link to THIS file (needed only for the code+lobby-hop)
 local JUMP_ANTIAFK = false     -- also jump every 60s (resets game-side AFK detection)
