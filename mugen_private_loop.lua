@@ -192,68 +192,67 @@ local function leaderReady()
     return false
 end
 
-local function pickTeleporter()
-    local mt = workspace:WaitForChild("MugenTrain", math.huge)
-    local tps = mt:WaitForChild("Teleporters", math.huge)
-    local slot = math.clamp(math.floor(TELEPORTER_SLOT), 1, 10)
-    local target = tps:FindFirstChild("Teleport" .. slot)
-    if not target then                       -- requested slot doesn't exist -> first available
-        for i = 1, 10 do
-            target = tps:FindFirstChild("Teleport" .. i)
-            if target then break end
-        end
-    end
-    return target
-end
-
 local function boardTrain()
     local helper = farmHelper()
-    -- Coordinated boarding (kept alive by anti-afk the whole time):
-    --   1) window open + leader LOADED continuously for LEADER_STABLE_SECS (debounce,
-    --      so we don't rush the teleporter the instant artu2's name appears)
-    --   2) settle BOARD_DELAY + per-alt jitter, so the run finishes generating and the
-    --      alts don't all touch the teleporter on the same frame
-    --   3) re-confirm after settle - if artu2 dropped or the window closed, wait again
-    while true do
+
+    -- GATE: wait for the window + artu2 LOADED continuously for LEADER_STABLE_SECS.
+    -- This only confirms the group IS running this hour. Once confirmed we COMMIT -
+    -- we do NOT re-check his presence after, because by boarding time he may have
+    -- already stepped on his own teleporter and left Map 2. Re-checking here is what
+    -- made the slower alts abort and never follow him in ("only some go").
+    if LEADER_NAME ~= "" and client.Name:lower() ~= LEADER_NAME:lower() then
         local stableSince
         local warned = false
         while true do
-            local ok = inTrainWindow() and leaderReady()
-            if ok then
+            if inTrainWindow() and leaderReady() then
                 stableSince = stableSince or tick()
                 if tick() - stableSince >= LEADER_STABLE_SECS then break end
             else
                 stableSince = nil
                 if inTrainWindow() and not warned then
-                    warn("[MugenLoop] holding in Map 2 - leader '" .. LEADER_NAME .. "' not loaded/present. Will not board alone.")
+                    warn("[MugenLoop] holding - leader '" .. LEADER_NAME .. "' not loaded yet. Will not board alone.")
                     warned = true
                 end
             end
             task.wait(0.25)
         end
-
-        task.wait(BOARD_DELAY + math.random() * BOARD_JITTER)
-
-        if inTrainWindow() and leaderReady() then break end   -- still good after settle -> go
-        -- otherwise loop back and re-establish a stable leader before boarding
+    else
+        while not inTrainWindow() do task.wait(0.5) end   -- leader/no-gate: just wait the window
     end
 
-    pcall(function()
-        local data = ReplicatedStorage:FindFirstChild("Player_Data")
-        local pdat = data and data:FindFirstChild(client.Name)
-        local tickets = pdat and pdat:FindFirstChild("Inventory") and pdat.Inventory:FindFirstChild("Items")
-            and pdat.Inventory.Items:FindFirstChild("Mugen Train Ticket")
-        if not tickets or (tickets:FindFirstChild("Amount") and tickets.Amount.Value <= 0) then
-            ReplicatedStorage:WaitForChild("purchase_mugen_ticket"):FireServer(1)
-            task.wait(0.3)
-        end
-    end)
+    -- SETTLE: let the run finish generating and stagger the alts so they don't all
+    -- touch a teleporter on the same frame. Then we're committed for this cycle.
+    task.wait(BOARD_DELAY + math.random() * BOARD_JITTER)
 
-    local tp = pickTeleporter()
-    if tp then
-        tweento(CFrame.new(tp:GetModelCFrame().Position)).Completed:Wait()
-        task.wait(0.25)
-        tpto(CFrame.new(tp:GetModelCFrame().Position))   -- sit on it to guarantee the touch fires
+    -- ticket: fire the purchase (no-op if we already hold one)
+    pcall(function() ReplicatedStorage:WaitForChild("purchase_mugen_ticket", 5):FireServer(1) end)
+    task.wait(0.3)
+
+    -- BOARD with retry: try the chosen slot first, then fall through the rest (covers a
+    -- full/occupied seat, which was the OTHER reason some alts never made it in). A
+    -- successful board teleports us out and the script re-execs in the Mugen place, so
+    -- if we're still running after a touch, that slot didn't take - move to the next.
+    local slot = math.clamp(math.floor(TELEPORTER_SLOT), 1, 10)
+    local order = { slot }
+    for i = 1, 10 do if i ~= slot then order[#order + 1] = i end end
+
+    local deadline = tick() + 120
+    while inTrainWindow() and tick() < deadline do
+        local mt  = workspace:FindFirstChild("MugenTrain")
+        local tps = mt and mt:FindFirstChild("Teleporters")
+        if tps then
+            for _, i in ipairs(order) do
+                local tp = tps:FindFirstChild("Teleport" .. i)
+                if tp then
+                    local pos = tp:GetModelCFrame().Position
+                    tweento(CFrame.new(pos)).Completed:Wait()  -- walk in so the Touch fires (proven method)
+                    task.wait(0.4)
+                    tpto(CFrame.new(pos))
+                    task.wait(1.5)                              -- if it took, the teleport kills us here
+                end
+            end
+        end
+        task.wait(1)
     end
     helper:Stop()
     -- boarding teleports us into the Mugen place; the queued re-exec takes over there.
