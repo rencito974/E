@@ -23,6 +23,7 @@ local PRIVATE_CODE      = "6RgvfNL9"      -- Map 2 private server code. "" = ran
 local TELEPORTER_SLOT   = 1       -- which Mugen train teleporter to board (1-10, clamped to what exists)
 local FORCE_LEAVE_AFTER = 0       -- secs after boarding to force-leave regardless of run state. 0 = wait for the run to end.
 local MAX_RUN_SECONDS   = 720     -- hard cap in the Mugen place before bailing out (never hang forever)
+local JUMP_ANTIAFK      = false   -- also jump every 60s (resets game-side AFK detection; may nudge you mid-run)
 local TWEEN_SPEED       = 250     -- studs/sec for the walk onto the teleporter (higher = snappier)
 local LOADER_URL        = "https://raw.githubusercontent.com/rencito974/E/refs/heads/main/mugen_private_loop.lua"      -- YOUR raw github link to THIS file, e.g. "https://raw.githubusercontent.com/you/repo/main/mugen_private_loop.lua"
 --============================================================================
@@ -52,28 +53,32 @@ local function inMap2()  return placeId == MAP2_PUBLIC or placeId == MAP2_PRIVAT
 local function inMugen() return placeId == MUGEN end
 
 --========================= ANTI-AFK (hardened) ==============================
--- Three layers so the 20-min idle kick can never land:
---   1) client.Idled  -> nudge the controller the instant the timer trips
---   2) a 60s heartbeat that fires input BEFORE idle ever triggers
---   3) re-arm on respawn, guarded so re-execution never stacks connections
-if not getgenv().__MugenLoopAntiAfk then
-    getgenv().__MugenLoopAntiAfk = true
-
-    client.Idled:Connect(function()
+-- Re-armed on EVERY execution. A teleport lands in a fresh DataModel, so the old
+-- Idled connection is DEAD - a getgenv guard would leave every place after the
+-- lobby with no anti-afk, which is exactly how you get idle-kicked mid-loop.
+-- Duplicate connections in one place are harmless (they just double-reset).
+--   1) client.Idled  -> reset the instant Roblox's 20-min timer trips (works tabbed out)
+--   2) 60s heartbeat -> proactively feed input so the timer never nears the kick
+--   3) optional jump -> resets the GAME's own movement-based AFK check (JUMP_ANTIAFK)
+do
+    local function resetIdle()
         pcall(function()
             VirtualUser:CaptureController()
-            VirtualUser:ClickButton2(Vector2.new())
+            VirtualUser:ClickButton2(Vector2.new())          -- simulated input == idle timer reset
         end)
-    end)
+    end
+
+    client.Idled:Connect(resetIdle)
 
     task.spawn(function()
         while task.wait(60) do
-            pcall(function()
-                local cam = workspace.CurrentCamera
-                VirtualUser:CaptureController()
-                VirtualUser:Button1Down(Vector2.new(0, 0), cam and cam.CFrame or CFrame.new())
-                VirtualUser:Button1Up(Vector2.new(0, 0),   cam and cam.CFrame or CFrame.new())
-            end)
+            resetIdle()
+            if JUMP_ANTIAFK then                             -- server-side "are you moving" reset
+                pcall(function()
+                    local hum = client.Character and client.Character:FindFirstChildOfClass("Humanoid")
+                    if hum then hum.Jump = true end
+                end)
+            end
         end
     end)
 end
