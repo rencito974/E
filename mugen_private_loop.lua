@@ -25,6 +25,9 @@ local FORCE_LEAVE_AFTER = 0       -- secs after boarding to force-leave regardle
 local MAX_RUN_SECONDS   = 720     -- hard cap in the Mugen place before bailing out (never hang forever)
 local JUMP_ANTIAFK      = true   -- also jump every 60s (resets game-side AFK detection; may nudge you mid-run)
 local LEADER_NAME       = "artu2" -- alts only board the train while THIS player is in their server. "" = no gate.
+local LEADER_STABLE_SECS= 5       -- artu2 must be LOADED (character in) & present this long before alts commit
+local BOARD_DELAY       = 5       -- settle after the gate passes, so the run finishes generating before we board
+local BOARD_JITTER      = 3       -- + up to this many random secs per account, so alts don't pile onto one frame
 local TWEEN_SPEED       = 250     -- studs/sec for the walk onto the teleporter (higher = snappier)
 local LOADER_URL        = "https://raw.githubusercontent.com/rencito974/E/refs/heads/main/mugen_private_loop.lua"      -- YOUR raw github link to THIS file, e.g. "https://raw.githubusercontent.com/you/repo/main/mugen_private_loop.lua"
 --============================================================================
@@ -173,13 +176,17 @@ end
 -- Leader gate: never board unless LEADER_NAME is in this server (so an alt never
 -- rides Mugen alone if the main account isn't there). No gate if it's empty, and
 -- the leader account itself always passes. Case-insensitive; matches name or display.
-local function leaderPresent()
+-- Ready = leader is here AND his character is fully loaded (HRP present). Presence
+-- alone isn't enough - boarding the instant his name appears (before he's spawned)
+-- is what breaks the run generation.
+local function leaderReady()
     if LEADER_NAME == "" then return true end
     local want = LEADER_NAME:lower()
     if client.Name:lower() == want then return true end
     for _, p in ipairs(Players:GetPlayers()) do
         if p.Name:lower() == want or p.DisplayName:lower() == want then
-            return true
+            local ch = p.Character
+            return ch ~= nil and ch:FindFirstChild("HumanoidRootPart") ~= nil
         end
     end
     return false
@@ -201,17 +208,34 @@ end
 
 local function boardTrain()
     local helper = farmHelper()
-    -- hold here (kept alive by anti-afk) until BOTH the train window is open AND the
-    -- leader is in the server. If artu2 isn't here, we never board - we just wait.
-    local warned = false
-    while not (inTrainWindow() and leaderPresent()) do
-        if inTrainWindow() and not leaderPresent() and not warned then
-            warn("[MugenLoop] train window open but leader '" .. LEADER_NAME .. "' not in server - holding, will not board.")
-            warned = true
-        elseif leaderPresent() then
-            warned = false
+    -- Coordinated boarding (kept alive by anti-afk the whole time):
+    --   1) window open + leader LOADED continuously for LEADER_STABLE_SECS (debounce,
+    --      so we don't rush the teleporter the instant artu2's name appears)
+    --   2) settle BOARD_DELAY + per-alt jitter, so the run finishes generating and the
+    --      alts don't all touch the teleporter on the same frame
+    --   3) re-confirm after settle - if artu2 dropped or the window closed, wait again
+    while true do
+        local stableSince
+        local warned = false
+        while true do
+            local ok = inTrainWindow() and leaderReady()
+            if ok then
+                stableSince = stableSince or tick()
+                if tick() - stableSince >= LEADER_STABLE_SECS then break end
+            else
+                stableSince = nil
+                if inTrainWindow() and not warned then
+                    warn("[MugenLoop] holding in Map 2 - leader '" .. LEADER_NAME .. "' not loaded/present. Will not board alone.")
+                    warned = true
+                end
+            end
+            task.wait(0.25)
         end
-        task.wait(0.5)
+
+        task.wait(BOARD_DELAY + math.random() * BOARD_JITTER)
+
+        if inTrainWindow() and leaderReady() then break end   -- still good after settle -> go
+        -- otherwise loop back and re-establish a stable leader before boarding
     end
 
     pcall(function()
