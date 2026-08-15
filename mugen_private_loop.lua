@@ -25,6 +25,7 @@ local TELEPORTER_SLOT   = 1       -- which Mugen train teleporter to board (1-10
 local FORCE_LEAVE_AFTER = 0       -- secs after boarding to force-leave regardless of run state. 0 = wait for the run to end.
 local PRESS_ENTRY_PROMPT= true    -- on arriving in Mugen, walk to the first E-prompt and fire it (start the run)
 local ENTRY_PROMPT_NAME = ""      -- "" = nearest prompt. Or a name/action-text substring to target a specific one.
+local AUTO_CHEST        = true    -- collect Loot_Chest drops during the run (ported from the hub's Auto Chest)
 local MAX_RUN_SECONDS   = 720     -- hard cap in the Mugen place before bailing out (never hang forever)
 local JUMP_ANTIAFK      = true   -- also jump every 60s (resets game-side AFK detection; may nudge you mid-run)
 local LEADER_NAME       = "artu2" -- alts only board while THIS player is in their server. "" = no gate.
@@ -45,6 +46,7 @@ local TeleportService  = game:GetService("TeleportService")
 local RunService       = game:GetService("RunService")
 local TweenService     = game:GetService("TweenService")
 local VirtualUser      = game:GetService("VirtualUser")
+local CollectionService= game:GetService("CollectionService")
 
 local client  = Players.LocalPlayer
 local placeId = game.PlaceId
@@ -345,10 +347,42 @@ end
 local function fightAndLeave()
     pressEntryPrompt()   -- click the first E-prompt to start the run
 
-    local left = false
+    local left       = false   -- guard: leave() has started
+    local collecting = true    -- Auto Chest loop runs while true
+
+    -- AUTO CHEST: grab Loot_Chest drops as they spawn (ported from the hub's Auto Chest).
+    if AUTO_CHEST then
+        task.spawn(function()
+            while collecting do
+                for _, chest in ipairs(CollectionService:GetTagged("Chests")) do
+                    if chest.Name == "Loot_Chest" then
+                        local drops = chest:FindFirstChild("Drops")
+                        local add   = chest:FindFirstChild("Add_To_Inventory")
+                        if drops and add then
+                            for _, d in ipairs(drops:GetChildren()) do
+                                pcall(function() add:InvokeServer(d.Name) end)
+                                d:Destroy()
+                            end
+                        end
+                    end
+                end
+                task.wait(0.5)
+            end
+        end)
+    end
+
     local function leave()
         if left then return end
-        left = true
+        left = true   -- guard first so two triggers can't both run the exit
+        -- Wait for the loot chests to finish spawning so Auto Chest grabs them before
+        -- we go (ported from the hub's chest-wait: delay_chest_amount / 3.7 + buffer).
+        if AUTO_CHEST then
+            pcall(function()
+                local dca = workspace:FindFirstChild("delay_chest_amount")
+                task.wait(dca and (dca.Value / 3.7 + 6) or 6)
+            end)
+        end
+        collecting = false   -- chests grabbed -> stop the collector
         pcall(function()
             local map = workspace:FindFirstChild("Map")
             local carriage = map and map:FindFirstChild("Carriage")
@@ -360,7 +394,7 @@ local function fightAndLeave()
         TeleportService:Teleport(LOBBY, client)   -- guarantees we're back where the private join works
     end
 
-    -- run-end signal
+    -- run-end signal #1: the final cutscene fires when the run completes
     task.spawn(function()
         local ok, mtrain = pcall(function() return ReplicatedStorage:WaitForChild("MugenTrain", math.huge) end)
         if ok and mtrain then
@@ -369,6 +403,25 @@ local function fightAndLeave()
                 task.wait(6)   -- let the reward window settle before bailing
                 leave()
             end)
+        end
+    end)
+
+    -- run-end signal #2 (independent fallback): the carriage's leave prompt appears
+    -- when the run is over. Poll for it, but only after a minimum time so it can't
+    -- false-trigger on entry. Covers a missed Cutscene10 so we don't wait the cap.
+    task.spawn(function()
+        local start = tick()
+        while not left do
+            if tick() - start > 30 then
+                local map = workspace:FindFirstChild("Map")
+                local carriage = map and map:FindFirstChild("Carriage")
+                if carriage and carriage:FindFirstChild("MenuTeleportProximity", true) then
+                    warn("[MugenLoop] run-end leave prompt detected -> leaving.")
+                    leave()
+                    break
+                end
+            end
+            task.wait(2)
         end
     end)
 
