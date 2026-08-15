@@ -323,32 +323,23 @@ local function readSignal()
     return b
 end
 
--- Walk onto the teleporters at/after boardAt (chosen slot first, then fall through a
--- full seat). A successful board teleports us out (script re-execs in Mugen); if we
--- stay running the seat didn't take, so we retry across the grace span.
+-- Plant on OUR circle (TELEPORTER_SLOT) and HOLD there until the train departs and
+-- boards us. We do NOT cycle through the other circles - staying put on one is what
+-- lets the train pick us up. When it departs we teleport out (script re-execs in
+-- Mugen); if we're still running past the grace, that hour didn't take.
 local function attemptBoard(boardAt)
-    setStatus("boarding train...", C_GO)
-    local helper = farmHelper()   -- noclip + antifall for the board attempt only
+    setStatus("holding on circle " .. math.clamp(math.floor(TELEPORTER_SLOT), 1, 10), C_GO)
+    local helper = farmHelper()   -- noclip + antifall so nothing knocks us off the circle
     pcall(function() ReplicatedStorage:WaitForChild("purchase_mugen_ticket", 5):FireServer(1) end)
     local slot = math.clamp(math.floor(TELEPORTER_SLOT), 1, 10)
-    local order = { slot }
-    for i = 1, 10 do if i ~= slot then order[#order + 1] = i end end
     while os.time() <= boardAt + SIGNAL_GRACE do
         local mt  = workspace:FindFirstChild("MugenTrain")
         local tps = mt and mt:FindFirstChild("Teleporters")
-        if tps then
-            for _, i in ipairs(order) do
-                local tp = tps:FindFirstChild("Teleport" .. i)
-                if tp then
-                    local pos = tp:GetModelCFrame().Position
-                    tweento(CFrame.new(pos)).Completed:Wait()  -- walk in so the Touch fires
-                    task.wait(0.3)
-                    tpto(CFrame.new(pos))
-                    task.wait(1)
-                end
-            end
+        local tp  = tps and tps:FindFirstChild("Teleport" .. slot)
+        if tp then
+            tpto(CFrame.new(tp:GetModelCFrame().Position))   -- keep planted on circle `slot`
         end
-        task.wait(0.5)
+        task.wait(0.3)
     end
     helper:Stop()
 end
