@@ -4,8 +4,9 @@
 --
 -- WHAT IT DOES (a place-driven state machine, re-runs itself on every teleport):
 --   Lobby   -> join your PRIVATE Map 2 (by code, or a random low-pop private)
---   Map 2   -> wait for the train window (min 0-10 of the hour), buy a ticket if
---              needed, then board the teleporter SLOT you picked (1-10)
+--   Map 2   -> the LEADER (artu2) publishes a shared board signal each hour; every
+--              account reads the same instant and boards ONE train together (slot 1-10)
+--   -- all accounts run on the same PC and coordinate through a shared file --
 --   Mugen   -> ride the run; leave when it ends (Cutscene10) or after a failsafe
 --              timeout, teleport back to the Lobby -> the loop repeats forever
 --
@@ -22,12 +23,15 @@
 local PRIVATE_CODE      = "6RgvfNL9"      -- Map 2 private server code. "" = random low-pop private.
 local TELEPORTER_SLOT   = 1       -- which Mugen train teleporter to board (1-10, clamped to what exists)
 local FORCE_LEAVE_AFTER = 0       -- secs after boarding to force-leave regardless of run state. 0 = wait for the run to end.
+local PRESS_ENTRY_PROMPT= true    -- on arriving in Mugen, walk to the first E-prompt and fire it (start the run)
+local ENTRY_PROMPT_NAME = ""      -- "" = nearest prompt. Or a name/action-text substring to target a specific one.
 local MAX_RUN_SECONDS   = 720     -- hard cap in the Mugen place before bailing out (never hang forever)
 local JUMP_ANTIAFK      = true   -- also jump every 60s (resets game-side AFK detection; may nudge you mid-run)
-local LEADER_NAME       = "artu2" -- alts only board the train while THIS player is in their server. "" = no gate.
-local LEADER_STABLE_SECS= 5       -- artu2 must be LOADED (character in) & present this long before alts commit
-local BOARD_DELAY       = 5       -- settle after the gate passes, so the run finishes generating before we board
-local BOARD_JITTER      = 3       -- + up to this many random secs per account, so alts don't pile onto one frame
+local LEADER_NAME       = "artu2" -- alts only board while THIS player is in their server. "" = no gate.
+local LEADER_TRIGGER_SEC= 90      -- LEADER account only: second-of-hour it publishes the board signal (inside train window)
+local BOARD_LEAD        = 4       -- seconds between the signal and the synced board (lets every alt read it first)
+local SIGNAL_GRACE      = 25      -- how long the board attempt stays live past boardAt (stale-guard / retry span)
+local BOARD_JITTER      = 1       -- alts add up to this many secs of sub-collision stagger after boardAt
 local TWEEN_SPEED       = 250     -- studs/sec for the walk onto the teleporter (higher = snappier)
 local LOADER_URL        = "https://raw.githubusercontent.com/rencito974/E/refs/heads/main/mugen_private_loop.lua"      -- YOUR raw github link to THIS file, e.g. "https://raw.githubusercontent.com/you/repo/main/mugen_private_loop.lua"
 --============================================================================
@@ -166,78 +170,60 @@ local function joinPrivateMap2()
 end
 
 --=============================== STATE: MAP 2 ===============================
--- Train is up the first 10 minutes of every hour. Wait for that window, ensure a
--- ticket, then walk onto the chosen teleporter to board -> teleports us to Mugen.
-local function inTrainWindow()
-    local minuteOfHour = (tick() / 60) % 60
-    return minuteOfHour > 0 and minuteOfHour < 10
-end
-
--- Leader gate: never board unless LEADER_NAME is in this server (so an alt never
--- rides Mugen alone if the main account isn't there). No gate if it's empty, and
--- the leader account itself always passes. Case-insensitive; matches name or display.
--- Ready = leader is here AND his character is fully loaded (HRP present). Presence
--- alone isn't enough - boarding the instant his name appears (before he's spawned)
--- is what breaks the run generation.
+-- Leader presence: LEADER_NAME is in this server's player list. We read from the
+-- player list (not his streamed-in character): with StreamingEnabled a far-away
+-- leader has no HRP on our client, which would falsely read as "gone". The player
+-- list is streaming-independent, so it's the reliable "is artu2 actually here" check.
 local function leaderReady()
     if LEADER_NAME == "" then return true end
     local want = LEADER_NAME:lower()
     if client.Name:lower() == want then return true end
     for _, p in ipairs(Players:GetPlayers()) do
         if p.Name:lower() == want or p.DisplayName:lower() == want then
-            local ch = p.Character
-            return ch ~= nil and ch:FindFirstChild("HumanoidRootPart") ~= nil
+            return true
         end
     end
     return false
 end
 
-local function boardTrain()
-    local helper = farmHelper()
+-- SHARED-FILE BOARD SIGNAL. All accounts run on ONE PC, so they share the executor's
+-- writefile/readfile folder. Only the LEADER writes the signal ("<hourId>|<boardAt>");
+-- every account (leader included) reads the SAME boardAt and boards at that instant,
+-- so they hit ONE train together - the only way to be in the same run, since you
+-- can't join a Mugen run once it's departed. No signal on disk = artu2 isn't running
+-- = nobody boards. Sharing one number means zero clock-skew between accounts.
+local SIGNAL_FILE = "FireHub/PJS/mugen_board_signal.txt"
+pcall(function() if makefolder and not isfolder("FireHub/PJS") then makefolder("FireHub/PJS") end end)
 
-    -- GATE: wait for the window + artu2 LOADED continuously for LEADER_STABLE_SECS.
-    -- This only confirms the group IS running this hour. Once confirmed we COMMIT -
-    -- we do NOT re-check his presence after, because by boarding time he may have
-    -- already stepped on his own teleporter and left Map 2. Re-checking here is what
-    -- made the slower alts abort and never follow him in ("only some go").
-    if LEADER_NAME ~= "" and client.Name:lower() ~= LEADER_NAME:lower() then
-        local stableSince
-        local warned = false
-        while true do
-            if inTrainWindow() and leaderReady() then
-                stableSince = stableSince or tick()
-                if tick() - stableSince >= LEADER_STABLE_SECS then break end
-            else
-                stableSince = nil
-                if inTrainWindow() and not warned then
-                    warn("[MugenLoop] holding - leader '" .. LEADER_NAME .. "' not loaded yet. Will not board alone.")
-                    warned = true
-                end
-            end
-            task.wait(0.25)
-        end
-    else
-        while not inTrainWindow() do task.wait(0.5) end   -- leader/no-gate: just wait the window
-    end
+local function hourId()     return math.floor(os.time() / 3600) end
+local function secOfHour()  return os.time() % 3600 end
 
-    -- SETTLE: let the run finish generating and stagger the alts so they don't all
-    -- touch a teleporter on the same frame. Then we're committed for this cycle.
-    task.wait(BOARD_DELAY + math.random() * BOARD_JITTER)
+local function writeSignal(boardAt)
+    pcall(function() writefile(SIGNAL_FILE, hourId() .. "|" .. boardAt) end)
+end
 
-    -- ticket: fire the purchase (no-op if we already hold one)
+-- Returns boardAt if a FRESH signal for THIS hour exists, else nil.
+local function readSignal()
+    local ok, data = pcall(function() return isfile(SIGNAL_FILE) and readfile(SIGNAL_FILE) or nil end)
+    if not ok or not data then return nil end
+    local h, b = data:match("^(%-?%d+)|(%-?%d+)$")
+    h, b = tonumber(h), tonumber(b)
+    if not h or not b then return nil end
+    if h ~= hourId() then return nil end                 -- last hour's signal -> ignore
+    if os.time() > b + SIGNAL_GRACE then return nil end   -- boardAt long past -> ignore
+    return b
+end
+
+-- Walk onto the teleporters at/after boardAt (chosen slot first, then fall through a
+-- full seat). A successful board teleports us out (script re-execs in Mugen); if we
+-- stay running the seat didn't take, so we retry across the grace span.
+local function attemptBoard(boardAt)
+    local helper = farmHelper()   -- noclip + antifall for the board attempt only
     pcall(function() ReplicatedStorage:WaitForChild("purchase_mugen_ticket", 5):FireServer(1) end)
-    task.wait(0.3)
-
-    -- BOARD with retry: try the chosen slot first, then fall through the rest (covers a
-    -- full/occupied seat, which was the OTHER reason some alts never made it in). A
-    -- successful board teleports us out and the script re-execs in the Mugen place, so
-    -- if we're still running after a touch, that slot didn't take - move to the next.
     local slot = math.clamp(math.floor(TELEPORTER_SLOT), 1, 10)
     local order = { slot }
     for i = 1, 10 do if i ~= slot then order[#order + 1] = i end end
-
-    local deadline = tick() + 120
-    while inTrainWindow() and tick() < deadline do
+    while os.time() <= boardAt + SIGNAL_GRACE do
         local mt  = workspace:FindFirstChild("MugenTrain")
         local tps = mt and mt:FindFirstChild("Teleporters")
         if tps then
@@ -245,23 +231,120 @@ local function boardTrain()
                 local tp = tps:FindFirstChild("Teleport" .. i)
                 if tp then
                     local pos = tp:GetModelCFrame().Position
-                    tweento(CFrame.new(pos)).Completed:Wait()  -- walk in so the Touch fires (proven method)
-                    task.wait(0.4)
+                    tweento(CFrame.new(pos)).Completed:Wait()  -- walk in so the Touch fires
+                    task.wait(0.3)
                     tpto(CFrame.new(pos))
-                    task.wait(1.5)                              -- if it took, the teleport kills us here
+                    task.wait(1)
                 end
             end
         end
-        task.wait(1)
+        task.wait(0.5)
     end
     helper:Stop()
-    -- boarding teleports us into the Mugen place; the queued re-exec takes over there.
+end
+
+local function boardTrain()
+    local isLeader = (LEADER_NAME == "") or (client.Name:lower() == LEADER_NAME:lower())
+    local handled  -- hourId we've already acted on (per execution; resets on re-exec)
+
+    while true do
+        if isLeader then
+            -- LEADER: once per hour, at the trigger second, publish the shared boardAt
+            -- for everyone, then board at it yourself. (You board too, so you're on the
+            -- same train as the alts.)
+            if secOfHour() >= LEADER_TRIGGER_SEC and handled ~= hourId() then
+                local boardAt = os.time() + BOARD_LEAD
+                writeSignal(boardAt)
+                handled = hourId()
+                warn(("[MugenLoop] LEADER published board signal | boardAt in %ds"):format(BOARD_LEAD))
+                repeat task.wait(0.2) until os.time() >= boardAt
+                attemptBoard(boardAt)
+                warn("[MugenLoop] leader board window passed - re-arming for next hour.")
+            else
+                task.wait(0.5)
+            end
+        else
+            -- ALT: board only if artu2 published a fresh signal AND he's in THIS server
+            -- (the file is shared PC-wide; leaderReady confirms same instance, not a
+            -- different one). Then wait for the shared boardAt and board together.
+            local boardAt = readSignal()
+            if boardAt and handled ~= hourId() then
+                if leaderReady() then
+                    handled = hourId()
+                    warn("[MugenLoop] board signal received - syncing to board with leader.")
+                    repeat task.wait(0.1) until os.time() >= boardAt
+                    task.wait(math.random() * BOARD_JITTER)   -- sub-second anti-collision only
+                    attemptBoard(boardAt)
+                    warn("[MugenLoop] alt board window passed - re-arming for next hour.")
+                else
+                    handled = hourId()   -- signal exists but leader isn't in our instance -> skip hour
+                    warn(("[MugenLoop] signal present but leader '%s' not in THIS server - not boarding (same code on every account?)."):format(LEADER_NAME))
+                end
+            else
+                task.wait(0.4)
+            end
+        end
+    end
+    -- (unreachable; a successful board teleports us into the Mugen place)
 end
 
 --=============================== STATE: MUGEN ===============================
+-- World CFrame of whatever a ProximityPrompt is parented to (BasePart or Attachment).
+local function promptCF(p)
+    local par = p.Parent
+    if not par then return nil end
+    if par:IsA("BasePart") then return par.CFrame end
+    if par:IsA("Attachment") then return par.WorldCFrame end
+    return nil
+end
+
+-- On arriving in Mugen, walk to the first E-prompt and fire it (start the run). Scans
+-- for up to 30s as prompts stream in; nearest prompt by default, or the one whose name
+-- / action text matches ENTRY_PROMPT_NAME. Runs in the background so it can't block leave.
+local function pressEntryPrompt()
+    if not PRESS_ENTRY_PROMPT then return end
+    task.spawn(function()
+        local want = ENTRY_PROMPT_NAME:lower()
+        local deadline = tick() + 30
+        while tick() < deadline do
+            local char = client.Character
+            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                local best, bestDist, bestCF
+                for _, d in ipairs(workspace:GetDescendants()) do
+                    if d:IsA("ProximityPrompt") and d.Enabled then
+                        local match = (want == "")
+                            or d.Name:lower():find(want, 1, true)
+                            or (d.ActionText and d.ActionText:lower():find(want, 1, true))
+                            or (d.ObjectText and d.ObjectText:lower():find(want, 1, true))
+                        local cf = match and promptCF(d)
+                        if cf then
+                            local dist = (cf.Position - hrp.Position).Magnitude
+                            if not bestDist or dist < bestDist then best, bestDist, bestCF = d, dist, cf end
+                        end
+                    end
+                end
+                if best then
+                    pcall(function()
+                        tpto(bestCF)
+                        task.wait(0.4)
+                        fireproximityprompt(best)
+                    end)
+                    warn("[MugenLoop] fired entry prompt: " .. best.Name)
+                    return
+                end
+            end
+            task.wait(0.5)
+        end
+        warn("[MugenLoop] no entry prompt found in Mugen within 30s.")
+    end)
+end
+
 -- Leave when the run ends (Cutscene10) or when a failsafe timer fires, then head
 -- back to the Lobby so the private-join loop can start the next cycle.
 local function fightAndLeave()
+    pressEntryPrompt()   -- click the first E-prompt to start the run
+
     local left = false
     local function leave()
         if left then return end
