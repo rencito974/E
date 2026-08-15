@@ -103,6 +103,21 @@ if not getgenv().__CloudyAntiAfk then
         VirtualUser:ClickButton2(Vector2.new())
     end)
 end
+-- ===== MUGEN LEADER SIGNAL (syncs the standalone alt mugen-loop scripts) =====
+-- When THIS account (the leader) boards the Mugen train, publishMugenBoard writes a
+-- shared file the alts (mugen_private_loop, same PC) read, so they board the SAME
+-- train at the SAME instant - however late the dungeon makes us. Only the named
+-- leader publishes; MUGEN_SIGNAL_LEADER must match LEADER_NAME in the alt script.
+local MUGEN_SIGNAL_FILE   = "FireHub/PJS/mugen_board_signal.txt"
+local MUGEN_SIGNAL_LEADER = "artu2"   -- account that publishes the board signal
+local MUGEN_SIGNAL_LEAD   = 4          -- secs between publishing and boarding (time for alts to sync in)
+local function publishMugenBoard()
+    if client.Name:lower() ~= MUGEN_SIGNAL_LEADER:lower() then return end
+    local boardAt = os.time() + MUGEN_SIGNAL_LEAD
+    pcall(function() writefile(MUGEN_SIGNAL_FILE, math.floor(os.time() / 3600) .. "|" .. boardAt) end)
+    repeat task.wait(0.2) until os.time() >= boardAt   -- hold so the alts gather, then board together
+end
+
 local ping = StatsService.Network.ServerStatsItem["Data Ping"]
 local placeId = game.PlaceId
 local jobId = game.JobId
@@ -2402,6 +2417,7 @@ Tabs["Mugen"]:AddToggle("tJoinMugen", {
                             ReplicatedStorage:WaitForChild("purchase_mugen_ticket"):FireServer(1)
                         end
                         options["tAutoBoss"]:SetValue(false)
+                        publishMugenBoard()   -- leader: signal the alts to board WITH us, then board together
                         tweento(CFrame.new(workspace.MugenTrain.Teleporters["Teleport" .. options.sMugenTeleporter.Value]:GetModelCFrame().Position)).Completed:Wait()
                         break
                     end
