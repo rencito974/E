@@ -160,10 +160,97 @@ local function farmHelper()
     return Farm
 end
 
+--============================ STATUS HUD ====================================
+-- Corner label + heartbeat so you can glance across your instances and see each
+-- account's state and that its thread is alive (uptime ticks, dot pulses). Rebuilt
+-- every execution (each teleport is a fresh DataModel). Colors flag the state.
+local C_WAIT  = Color3.fromRGB(240, 205, 90)   -- waiting / holding
+local C_GO    = Color3.fromRGB(90, 220, 120)   -- boarding / go
+local C_RUN   = Color3.fromRGB(90, 165, 240)   -- in the run
+local C_LEAVE = Color3.fromRGB(240, 150, 80)   -- leaving / restarting
+local setStatus
+do
+    local parent = (gethui and gethui()) or (get_hidden_gui and get_hidden_gui())
+    if not parent then parent = pcall(function() return game:GetService("CoreGui").Name end) and game:GetService("CoreGui") or nil end
+    if not parent then parent = client:WaitForChild("PlayerGui") end
+
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "MugenLoopHUD"
+    gui.ResetOnSpawn = false
+    gui.IgnoreGuiInset = true
+    gui.DisplayOrder = 999999
+    pcall(function() gui.Parent = parent end)
+    if not gui.Parent then pcall(function() gui.Parent = client:WaitForChild("PlayerGui") end) end
+
+    local frame = Instance.new("Frame")
+    frame.AnchorPoint = Vector2.new(0, 1)
+    frame.Position = UDim2.new(0, 8, 1, -8)          -- bottom-left
+    frame.Size = UDim2.new(0, 250, 0, 52)
+    frame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+    frame.BackgroundTransparency = 0.1
+    frame.BorderSizePixel = 0
+    frame.Parent = gui
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+    local stroke = Instance.new("UIStroke", frame); stroke.Color = Color3.fromRGB(60, 60, 72); stroke.Thickness = 1
+
+    local dot = Instance.new("Frame")
+    dot.Size = UDim2.new(0, 10, 0, 10)
+    dot.Position = UDim2.new(0, 12, 0, 9)
+    dot.BackgroundColor3 = C_GO
+    dot.BorderSizePixel = 0
+    dot.Parent = frame
+    Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+
+    local title = Instance.new("TextLabel")
+    title.BackgroundTransparency = 1
+    title.Position = UDim2.new(0, 30, 0, 5)
+    title.Size = UDim2.new(1, -36, 0, 16)
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 12
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.TextColor3 = Color3.fromRGB(235, 235, 240)
+    title.Text = "MugenLoop • " .. client.Name
+    title.Parent = frame
+
+    local label = Instance.new("TextLabel")
+    label.BackgroundTransparency = 1
+    label.Position = UDim2.new(0, 12, 0, 24)
+    label.Size = UDim2.new(1, -18, 0, 24)
+    label.Font = Enum.Font.Gotham
+    label.TextSize = 12
+    label.TextWrapped = true
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.TextYAlignment = Enum.TextYAlignment.Top
+    label.TextColor3 = Color3.fromRGB(205, 205, 215)
+    label.Text = "starting..."
+    label.Parent = frame
+
+    local startAt = tick()
+    setStatus = function(text, color)
+        pcall(function()
+            if text then label.Text = text end
+            if color then dot.BackgroundColor3 = color end
+        end)
+    end
+
+    -- heartbeat: pulse the dot + tick uptime so a frozen thread is obvious at a glance
+    task.spawn(function()
+        local on = false
+        while gui.Parent do
+            on = not on
+            dot.BackgroundTransparency = on and 0 or 0.65
+            local up = math.floor(tick() - startAt)
+            title.Text = ("MugenLoop • %s  [%dm%02ds]"):format(client.Name, math.floor(up / 60), up % 60)
+            task.wait(0.5)
+        end
+    end)
+end
+
 --=============================== STATE: LOBBY ===============================
 -- The private-code join uses a lobby-only remote; a code resolves to a private
 -- instance of Map 2, empty code falls to the random-private Map 2 place.
 local function joinPrivateMap2()
+    setStatus("Lobby → joining private Map 2", C_WAIT)
     if PRIVATE_CODE ~= "" then
         ReplicatedStorage:WaitForChild("handle_privateserver"):InvokeServer("join", PRIVATE_CODE, MAP2_PUBLIC)
     else
@@ -220,6 +307,7 @@ end
 -- full seat). A successful board teleports us out (script re-execs in Mugen); if we
 -- stay running the seat didn't take, so we retry across the grace span.
 local function attemptBoard(boardAt)
+    setStatus("boarding train...", C_GO)
     local helper = farmHelper()   -- noclip + antifall for the board attempt only
     pcall(function() ReplicatedStorage:WaitForChild("purchase_mugen_ticket", 5):FireServer(1) end)
     local slot = math.clamp(math.floor(TELEPORTER_SLOT), 1, 10)
@@ -259,10 +347,12 @@ local function boardTrain()
                 writeSignal(boardAt)
                 handled = hourId()
                 warn(("[MugenLoop] LEADER published board signal | boardAt in %ds"):format(BOARD_LEAD))
+                setStatus("published signal • boarding", C_GO)
                 repeat task.wait(0.2) until os.time() >= boardAt
                 attemptBoard(boardAt)
                 warn("[MugenLoop] leader board window passed - re-arming for next hour.")
             else
+                setStatus("Map 2 • leader: waiting for trigger", C_WAIT)
                 task.wait(0.5)
             end
         else
@@ -274,6 +364,7 @@ local function boardTrain()
                 if leaderReady() then
                     handled = hourId()
                     warn("[MugenLoop] board signal received - syncing to board with leader.")
+                    setStatus("signal! syncing to board", C_GO)
                     repeat task.wait(0.1) until os.time() >= boardAt
                     task.wait(math.random() * BOARD_JITTER)   -- sub-second anti-collision only
                     attemptBoard(boardAt)
@@ -281,8 +372,10 @@ local function boardTrain()
                 else
                     handled = hourId()   -- signal exists but leader isn't in our instance -> skip hour
                     warn(("[MugenLoop] signal present but leader '%s' not in THIS server - not boarding (same code on every account?)."):format(LEADER_NAME))
+                    setStatus("leader not in this server!", C_LEAVE)
                 end
             else
+                setStatus(("Map 2 • waiting for '%s' signal"):format(LEADER_NAME), C_WAIT)
                 task.wait(0.4)
             end
         end
@@ -345,6 +438,7 @@ end
 -- Leave when the run ends (Cutscene10) or when a failsafe timer fires, then head
 -- back to the Lobby so the private-join loop can start the next cycle.
 local function fightAndLeave()
+    setStatus("Mugen • in run", C_RUN)
     pressEntryPrompt()   -- click the first E-prompt to start the run
 
     local left       = false   -- guard: leave() has started
@@ -374,6 +468,7 @@ local function fightAndLeave()
     local function leave()
         if left then return end
         left = true   -- guard first so two triggers can't both run the exit
+        setStatus("run over • collecting + leaving", C_LEAVE)
         -- Wait for the loot chests to finish spawning so Auto Chest grabs them before
         -- we go (ported from the hub's chest-wait: delay_chest_amount / 3.7 + buffer).
         if AUTO_CHEST then
@@ -447,6 +542,7 @@ task.spawn(function()
         fightAndLeave()
     else
         -- Hub or anywhere unexpected -> route back to the Lobby to start the loop
+        setStatus("routing to Lobby...", C_WAIT)
         TeleportService:Teleport(LOBBY, client)
     end
 end)
