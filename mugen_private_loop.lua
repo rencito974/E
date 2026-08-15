@@ -26,6 +26,7 @@ local FORCE_LEAVE_AFTER = 0       -- secs after boarding to force-leave regardle
 local PRESS_ENTRY_PROMPT= true    -- on arriving in Mugen, walk to the first E-prompt and fire it (start the run)
 local ENTRY_PROMPT_NAME = ""      -- "" = nearest prompt. Or a name/action-text substring to target a specific one.
 local AUTO_CHEST        = true    -- collect Loot_Chest drops during the run (ported from the hub's Auto Chest)
+local SUN_IMMUNITY      = true    -- disable the client Sun_Damage script so the dream-world sun can't kill us
 local MAX_RUN_SECONDS   = 720     -- hard cap in the Mugen place before bailing out (never hang forever)
 local JUMP_ANTIAFK      = true   -- also jump every 60s (resets game-side AFK detection; may nudge you mid-run)
 local LEADER_NAME       = "artu2" -- alts only board while THIS player is in their server. "" = no gate.
@@ -89,6 +90,25 @@ do
                     if hum then hum.Jump = true end
                 end)
             end
+        end
+    end)
+end
+
+--============================ SUN IMMUNITY ==================================
+-- Disable the client Sun_Damage gameplay script so the dream-world sun can't kill us
+-- during the Mugen run (ported from the hub's Sun Immunity buff). Re-armed every
+-- execution and re-asserted, so it survives respawns / the game flipping it back on.
+if SUN_IMMUNITY then
+    task.spawn(function()
+        while true do
+            pcall(function()
+                local ps = client:FindFirstChild("PlayerScripts")
+                local sd = ps and ps:FindFirstChild("Small_Scripts")
+                sd = sd and sd:FindFirstChild("Gameplay")
+                sd = sd and sd:FindFirstChild("Sun_Damage")
+                if sd then sd.Disabled = true end
+            end)
+            task.wait(3)
         end
     end)
 end
