@@ -3224,6 +3224,12 @@ do
     -- Train is up the first 10 min of each hour. Leave for Map 2 up to LEAD secs early so we're
     -- standing there before it opens; tJoinMugen then waits and boards on its own at minute 0.
     local LEAD = 120
+    -- CATCH DEADLINE: if a dungeon runs long we must bail in time to still make the
+    -- Mugen train. MUGEN_DUNGEON_LEAVEBY = the latest second-of-hour we can still be
+    -- IN the dungeon; at/after it (while the train window is open and mugen isn't done
+    -- yet) we abandon the run and route to Map 2. Tune to your travel+board time:
+    -- lower it if you keep missing the train, raise it to squeeze in more dungeon.
+    local MUGEN_DUNGEON_LEAVEBY = 300   -- xx:05 by default (lower it if you still miss the train)
     local function secIntoHour() return tick() % 3600 end
     local function tripWindow()  local s = secIntoHour(); return s >= (3600 - LEAD) or s < 600 end
     local function targetHour()  local s = secIntoHour(); local h = math.floor(tick() / 3600); return (s >= (3600 - LEAD)) and (h + 1) or h end
@@ -3235,6 +3241,27 @@ do
     local function allDungeonOff()  setOne("tJoinDungeon", false); setSet(DUNGEON_FARM, false) end
     -- tAutoHell reset here too so it re-fires (false->true) on the next Mugen entry
     local function allMugenOff()    setSet(MUGEN_SET, false); setOne("tAutoMugenMob", false); setOne("tAutoHell", false) end
+
+    -- Runs while we're IN a dungeon. Each second it "thinks": is the Mugen train due
+    -- this hour, still open, and are we now past the point where finishing the dungeon
+    -- would make us miss it? If so, abandon the dungeon and head to the Lobby (-> Map 2)
+    -- so we still catch the train. Below the deadline it does nothing - keep grinding.
+    local function watchMugenCatch()
+        task.spawn(function()
+            while inDungeon() and options.tMasterFarm and options.tMasterFarm.Value do
+                local s = secIntoHour()
+                if mugenDue() and s < 600 and s >= MUGEN_DUNGEON_LEAVEBY then
+                    warn(("[AutoGrind] can't finish the dungeon before the train (%.0fs into hour) - bailing to catch it."):format(s))
+                    allDungeonOff()
+                    allMugenOff()
+                    task.wait(0.3)
+                    TeleportService:Teleport(LOBBY, client)   -- Lobby -> Map 2 for the Mugen train
+                    return
+                end
+                task.wait(1)
+            end
+        end)
+    end
 
     -- only called while standing in the Lobby (a private-code join uses a lobby-only remote)
     local function joinMap2FromLobby()
@@ -3265,6 +3292,7 @@ do
                 allMugenOff()
                 setOne("tJoinDungeon", true)          -- circles live in this place; stomp the portal FIRST
                 setSet(DUNGEON_FARM, true)            -- then farm + shop + quit -> back to Hub
+                watchMugenCatch()                     -- bail if the dungeon runs past the train-catch deadline
             elseif inMugen() then
                 allDungeonOff()                       -- no dungeon stuff in the Mugen place
                 setSet(MUGEN_SET, true)               -- Full Auto Solo Mugen + Auto Quit + Auto Join
